@@ -16,6 +16,7 @@
 #include "../system/persist.h"
 #include <Arduino.h>
 #include <WiFi.h>
+#include <esp_wifi.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <freertos/semphr.h>
@@ -45,6 +46,8 @@ static volatile int s_scan_gen   = 0;
 /* True while the scan task is active — suppresses WIFI_STA_DISCONNECTED
  * being treated as a connection failure during the pre-scan disconnect. */
 static volatile bool s_scan_running = false;
+static portMUX_TYPE s_scan_mux = portMUX_INITIALIZER_UNLOCKED;
+static unsigned s_scan_tasks = 0;
 
 /* Reconnect after scan: saved here before we disconnect for the scan. */
 static char  s_post_scan_ssid[33] = "";
@@ -153,6 +156,9 @@ static void _scan_task(void *arg)
         s_need_reconnect = false;
     }
 
+    portENTER_CRITICAL(&s_scan_mux);
+    --s_scan_tasks;
+    portEXIT_CRITICAL(&s_scan_mux);
     vTaskDelete(NULL);
 }
 
@@ -196,10 +202,16 @@ void ui_wifi_bridge_start_scan(void)
     s_scan_running = true;    /* suppress disconnect→FAILED during pre-scan disconnect */
 
     int gen = (int)s_scan_gen;
+    portENTER_CRITICAL(&s_scan_mux);
+    ++s_scan_tasks;
+    portEXIT_CRITICAL(&s_scan_mux);
     BaseType_t rc = xTaskCreate(_scan_task, "wifi_scan",
                                  4096, (void *)(intptr_t)gen,
                                  3, NULL);
     if (rc != pdPASS) {
+        portENTER_CRITICAL(&s_scan_mux);
+        --s_scan_tasks;
+        portEXIT_CRITICAL(&s_scan_mux);
         s_scan_count  = 0;
         s_scan_running = false;
         Serial.println("[wifi] ERROR: scan task creation failed");
@@ -318,6 +330,23 @@ void ui_wifi_bridge_disconnect(void)
     s_status = WIFI_BRIDGE_IDLE;
     s_current_ssid[0] = '\0';
     s_current_ip[0]   = '\0';
+}
+
+bool ui_wifi_bridge_radio_busy(void)
+{
+    portENTER_CRITICAL(&s_scan_mux);
+    const bool busy = s_scan_tasks != 0;
+    portEXIT_CRITICAL(&s_scan_mux);
+    return busy;
+}
+
+bool ui_wifi_bridge_resume_station(void)
+{
+    s_status = WIFI_BRIDGE_CONNECTING;
+    // disconnect(false) retains the driver's full station configuration.
+    const esp_err_t result = esp_wifi_connect();
+    if (result != ESP_OK) s_status = WIFI_BRIDGE_FAILED;
+    return result == ESP_OK;
 }
 
 /* ── State ───────────────────────────────────────────────────── */

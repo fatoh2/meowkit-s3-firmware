@@ -533,6 +533,7 @@ void Launcher::returnToUI()
 
 void Launcher::loadAppsMenu()
 {
+    static_assert(APP_BUILTIN_ICONS_COUNT<=APPS_MENU_MAX_APPS,"Increase launcher capacity for registered apps");
     auto allInfo = _mooncake.getAllAppInfo();
     int count = (int)allInfo.size();
     if (count > APPS_MENU_MAX_APPS) count = APPS_MENU_MAX_APPS;

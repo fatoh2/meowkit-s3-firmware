@@ -129,6 +129,7 @@ LV_IMG_DECLARE(ui_img_picker_time_bg_png);         // assets/picker_time_bg.png
 LV_IMG_DECLARE(ui_img_message_box_bg_png);         // assets/message_box_bg.png
 
 // FONTS
+LV_IMG_DECLARE(ui_img_ic_meowgotchi); // FeralCat MeowGotchi icon; see app_11/README.md
 LV_FONT_DECLARE(ui_font_name_14);
 LV_FONT_DECLARE(ui_font_name_24);
 LV_FONT_DECLARE(ui_font_number_14);

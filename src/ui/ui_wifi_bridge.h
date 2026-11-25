@@ -56,6 +56,12 @@ void ui_wifi_bridge_connect_pending(const char * password);
 /** Disconnect from current AP. */
 void ui_wifi_bridge_disconnect(void);
 
+/** True until all Settings scan tasks (including reconnect cleanup) have exited. */
+bool ui_wifi_bridge_radio_busy(void);
+
+/** Resume the driver's existing station configuration without rewriting NVS. */
+bool ui_wifi_bridge_resume_station(void);
+
 /* ── State query ─────────────────────────────────────────────── */
 typedef enum {
     WIFI_BRIDGE_IDLE       = 0,

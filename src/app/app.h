@@ -26,6 +26,7 @@
 #include "app_08/badusb.h"      /* Bad USB      */
 #include "app_09/infrared.h"    /* Infrared     */
 #include "app_10/nfc.h"         /* NFC          */
+#include "app_11/meowgotchi.h"  /* MeowGotchi   */
 
 #include <mooncake.h>
 #include <memory>
@@ -36,7 +37,7 @@
  */
 inline void registerAllApps(mooncake::Mooncake& mc, DEVICES* dev)
 {
-    /* Menu visual order: left → right, top → bottom (app_01 … app_09) */
+    /* Menu visual order: left → right, top → bottom (app_01 … app_11) */
     mc.installApp(std::make_unique<MOONCAKE::APPS::App01>(dev));     /* app_01  Dino         */
     mc.installApp(std::make_unique<MOONCAKE::APPS::App02>(dev));     /* app_02  Matrix Rain  */
     mc.installApp(std::make_unique<MOONCAKE::APPS::App03>(dev));     /* app_03  VU Meter     */
@@ -47,6 +48,7 @@ inline void registerAllApps(mooncake::Mooncake& mc, DEVICES* dev)
     mc.installApp(std::make_unique<MOONCAKE::APPS::AppBadUSB>(dev)); /* app_08  Bad USB      */
     mc.installApp(std::make_unique<MOONCAKE::APPS::App09>(dev));     /* app_09  Infrared     */
     mc.installApp(std::make_unique<MOONCAKE::APPS::App10>(dev));     /* app_10  NFC          */
+    mc.installApp(std::make_unique<MOONCAKE::APPS::App11>(dev));     /* app_11  MeowGotchi   */
 }
 
 /**
@@ -66,6 +68,7 @@ static const void* const APP_BUILTIN_ICONS[] = {
     &ui_img_badusb_png,      /* app_08  Bad USB     */
     &ui_img_infrared_png,    /* app_09  Infrared    */
     &ui_img_nfc_png,         /* app_10  NFC         */
+    &ui_img_ic_meowgotchi,   /* app_11  MeowGotchi  */
 };
 static const int APP_BUILTIN_ICONS_COUNT =
     (int)(sizeof(APP_BUILTIN_ICONS) / sizeof(APP_BUILTIN_ICONS[0]));
