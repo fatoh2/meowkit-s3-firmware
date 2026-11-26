@@ -10,6 +10,7 @@
 #include <SD_MMC.h>
 #include "../app_common/hp_ui.h"
 #include "infrared_signal.h"
+#include "infrared_library_file.h"
 #include <atomic>
 
 namespace MOONCAKE::APPS {
@@ -72,7 +73,7 @@ private:
     bool _scanPending = false;
     uint32_t _lastScan = 0, _lastDraw = 0;
     String _scanName;
-    File _loadingFile;
+    meow_ir::LibraryFile _loadingFile;
     Scene _loadDestination = Scene::Panel;
     String _loadType, _loadVersion;
     bool _loadHeaderChecked = false;
@@ -131,6 +132,7 @@ private:
 
     bool _loadRemote(const String& path);
     bool _writeRemote(const String& path, const std::vector<meow_ir::Signal>& signals, bool create);
+    bool _storageReady();
     bool _beginLibraryLoad(const String& path, Scene destination);
     void _runLibraryLoad();
     void _failLibraryLoad(const String& error);

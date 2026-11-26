@@ -14,18 +14,30 @@
 #include "SDMMC_Class.hpp"
 #include "../config.h"
 #include <Arduino.h>
+#include "../../system/usb_msc.h"
 
 /* Frequency ladder — descending, most compatible last */
-static constexpr uint32_t kFreqTable[] = { 40000, 20000, 10000, 5000 };
+static constexpr uint32_t kFreqTable[] = { 10000, 5000, 1000 };
 static constexpr int       kFreqCount  = (int)(sizeof(kFreqTable) / sizeof(kFreqTable[0]));
 
 /* ── Mount / Unmount ──────────────────────────────────────────── */
 
 bool SDMMC_Class::begin(bool mode4bit)
 {
-    if (_mounted) return true;
-
-    SD_MMC.setPins(HAL_PIN_SD_CLK, HAL_PIN_SD_CMD, HAL_PIN_SD_D0);
+    if (usb_msc_is_active()) return false; // PC owns raw SD sectors exclusively
+    // cardType() is cached by Arduino, so probe the existing mount before
+    // trusting it. Adopt healthy mounts without interrupting open app files.
+    if (SD_MMC.cardType()!=CARD_NONE) {
+        File root=SD_MMC.open("/");
+        const bool readable=root && root.isDirectory();
+        root.close();
+        if (readable) {
+            _mounted=true; _type=_mapCardType(SD_MMC.cardType()); return true;
+        }
+        SD_MMC.end();
+    }
+    _mounted=false; _type=CardType::NONE; _freq_khz=0;
+    if (!SD_MMC.setPins(HAL_PIN_SD_CLK, HAL_PIN_SD_CMD, HAL_PIN_SD_D0)) return false;
 
     for (int i = 0; i < kFreqCount; i++) {
         if (_tryMount(kFreqTable[i], mode4bit)) {
@@ -36,7 +48,7 @@ bool SDMMC_Class::begin(bool mode4bit)
             return true;
         }
         /* Brief settle before next attempt */
-        delay(50);
+        delay(20);
     }
 
     Serial.println("[SDMMC] Mount failed at all frequencies");
@@ -62,14 +74,16 @@ uint64_t SDMMC_Class::freeBytes()  const { return _mounted ? (totalBytes() - use
 
 bool SDMMC_Class::isPresent()
 {
-    if (!_mounted) return false;
+    if (usb_msc_is_active()) return false;
+    if (SD_MMC.cardType()==CARD_NONE) { _mounted=false; return false; }
     File f = SD_MMC.open("/");
-    bool ok = (bool)f;
+    bool ok = f && f.isDirectory();
     if (f) f.close();
     if (!ok) {
         /* Card was removed; update internal state */
-        _mounted = false;
-        _type    = CardType::NONE;
+        end();
+    } else {
+        _mounted=true; _type=_mapCardType(SD_MMC.cardType());
     }
     return ok;
 }
@@ -91,12 +105,14 @@ const char* SDMMC_Class::cardTypeStr() const
 
 bool SDMMC_Class::_tryMount(uint32_t freq_khz, bool mode4bit)
 {
-    /* SD_MMC.begin(path, mode1bit, format_if_fail, max_freq_hz) */
-    bool ok = SD_MMC.begin("/sdcard", !mode4bit, false, freq_khz * 1000UL);
+    /* Arduino passes this value directly to host.max_freq_khz. Never format. */
+    bool ok = SD_MMC.begin("/sdcard", !mode4bit, false, freq_khz);
     if (!ok) return false;
 
     uint8_t ct = SD_MMC.cardType();
-    if (ct == CARD_NONE) {
+    File root=ct!=CARD_NONE?SD_MMC.open("/"):File();
+    const bool readable=root && root.isDirectory(); root.close();
+    if (ct == CARD_NONE || !readable) {
         SD_MMC.end();
         return false;
     }
@@ -105,6 +121,11 @@ bool SDMMC_Class::_tryMount(uint32_t freq_khz, bool mode4bit)
     _freq_khz = freq_khz;
     _type     = _mapCardType(ct);
     return true;
+}
+
+bool sdmmcEnsureReady() {
+    static SDMMC_Class storage;
+    return storage.begin();
 }
 
 SDMMC_Class::CardType SDMMC_Class::_mapCardType(uint8_t raw)

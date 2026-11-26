@@ -30,6 +30,7 @@ public:
     bool capturing() const { return _capture; }
     bool aggressive() const { return _aggressive; }
     bool sdReady() const { return _sdReady; }
+    void setStorageReady(bool ready) { _sdReady=ready; }
     bool setCapture(bool enabled);
     bool setAggressive(bool enabled);
     bool selectTarget(unsigned index);

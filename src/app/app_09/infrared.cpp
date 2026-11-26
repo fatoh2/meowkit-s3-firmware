@@ -28,9 +28,7 @@ void App09::onOpen() {
     if (xTaskCreate(_txEntry, "MeowIR-TX", 4096, this, 1, &_txTask) != pdPASS) {
         _txTask = nullptr; _txStopped.store(true);
     }
-    if (SD_MMC.cardType() != CARD_NONE) {
-        SD_MMC.mkdir("/infrared"); SD_MMC.mkdir("/infrared/remote");
-    }
+    _storageReady();
     _readSettings();
     _setScene(Scene::Main);
     _draw();
@@ -44,6 +42,7 @@ void App09::onRunning() {
 }
 void App09::onClose() {
     _loadingFile.close();
+    meow_ir::releaseBuiltinCache();
     _stopRx(); _stopTx(); _txShutdown.store(true);
     if (_txTask) {
         xTaskNotifyGive(_txTask);

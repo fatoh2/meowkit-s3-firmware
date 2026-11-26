@@ -7,6 +7,7 @@
 namespace MOONCAKE::APPS {
 using namespace meow_ir::ui;
 void App09::_openFiles(bool library) {
+    if (!_storageReady()) { _message("SD Unavailable",_lastError); return; }
     _libraryBrowser = library;
     _directory = "/infrared";
     _push(Scene::Files);
@@ -59,14 +60,12 @@ void App09::_commitName() {
     }
 }
 void App09::_finishLearn() {
+    if (!_storageReady()) { _message("Save Failed",_lastError); return; }
     auto changed = _learningNew ? std::vector<meow_ir::Signal>{} : _signals;
     if (changed.size() >= meow_ir::MaxButtons) { _message("Remote Full", "Maximum 256 buttons"); return; }
     changed.push_back(_learned);
     String path = _remotePath;
     if (_learningNew) {
-        if (!SD_MMC.exists("/infrared/remote") && !SD_MMC.mkdir("/infrared/remote")) {
-            _message("Save Failed", "Cannot create /infrared/remote"); return;
-        }
         path = "/infrared/remote/Remote.ir";
         for (unsigned n = 2; SD_MMC.exists(path) && n < 100000; ++n)
             path = String("/infrared/remote/Remote") + n + ".ir";
@@ -81,7 +80,8 @@ void App09::_loadCategory(int category) {
     _category = category;
     const auto& info = meow_ir::Categories[category];
     String path;
-    for (const char* folder : {"/infrared/assets/", "/infrared/universal/"}) {
+    const bool sdReady=_device->sd.begin();
+    if (sdReady) for (const char* folder : {"/infrared/assets/", "/infrared/universal/"}) {
         String candidate = String(folder) + info.file + ".ir";
         if (SD_MMC.exists(candidate)) { path = candidate; break; }
         if (category == 1) {
@@ -89,8 +89,9 @@ void App09::_loadCategory(int category) {
             if (SD_MMC.exists(candidate)) { path = candidate; break; }
         }
     }
-    if (path.isEmpty() || !_beginLibraryLoad(path, Scene::Panel)) {
-        _message("Database Error", path.isEmpty() ? String("Missing ") + info.file + ".ir" : _lastError); return;
+    if (path.isEmpty()) path=String("builtin:")+info.file;
+    if (!_beginLibraryLoad(path, Scene::Panel)) {
+        _message("Database Error", _lastError); return;
     }
 }
 void App09::_moveNameKey(int horizontal, int vertical) {

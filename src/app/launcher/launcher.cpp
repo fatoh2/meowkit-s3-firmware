@@ -59,6 +59,7 @@
 #include "../../system/system_sound.h"
 #include <Arduino.h>
 #include <SD_MMC.h>
+#include "../../system/sd_write_file.h"
 #include <lvgl.h>
 #include <esp_system.h>
 #include <freertos/FreeRTOS.h>
@@ -429,21 +430,19 @@ void Launcher::closeRunningApp()
 }
 
 /* ── SD card ───────────────────────────────────────── */
+static void probeSdWrites() {
+    char probeName[56],probeError[96]{};
+    snprintf(probeName,sizeof(probeName),".meowkit-probe-%08lx.tmp",(unsigned long)esp_random());
+    if (meow_storage::probe("/sdcard",probeName,probeError,sizeof(probeError)))
+        Serial.println("[SDMMC] Write/sync/readback probe OK");
+    else Serial.printf("[SDMMC] Write probe failed: %s\n",probeError);
+}
 
 void Launcher::initSD()
 {
     Serial.println("[Launcher] Mounting SD (SDMMC 1-bit)...");
 
-    /* Pin assignment */
-    if (!SD_MMC.setPins(HAL_PIN_SD_CLK, HAL_PIN_SD_CMD, HAL_PIN_SD_D0)) {
-        Serial.println("[Launcher] SD pin config failed");
-        _sd_ready = false;
-        return;
-    }
-
-    /* Try mounting — single attempt at safe speed, max ~5s timeout */
-    Serial.printf("[Launcher] SD attempt @ 10MHz (1-bit)...\n");
-    bool mounted = SD_MMC.begin("/sdcard", true, false, 10000);
+    bool mounted = _device->sd.begin();
 
     if (!mounted || SD_MMC.cardType() == CARD_NONE) {
         SD_MMC.end();
@@ -458,6 +457,7 @@ void Launcher::initSD()
                   (unsigned long long)(SD_MMC.totalBytes() / (1024 * 1024)),
                   (unsigned long long)(SD_MMC.usedBytes()  / (1024 * 1024)));
     _sd_ready = true;
+    probeSdWrites();
 }
 
 /* ── Install apps ──────────────────────────────────── */
@@ -479,9 +479,7 @@ void Launcher::initLVGL()
     lv_port_disp_init(&_device->Lcd);
     lv_port_indev_init(&_device->ctp);
 
-    if (_sd_ready) {
-        lv_fs_fatfs_init();
-    }
+    lv_fs_fatfs_init(); // registers callbacks once; cards may arrive after boot
 
     _lvgl_inited = true;
 }
@@ -589,6 +587,7 @@ void Launcher::updateStatusBar()
     {
         bool sd_present = (ui_sd_present() != 0);
         if (sd_present != _sd_ready) {
+            if (sd_present && !usb_msc_is_active()) probeSdWrites();
             mk_event_push(sd_present ? MK_EVT_SD_INSERTED : MK_EVT_SD_REMOVED);
         }
         _sd_ready = sd_present;

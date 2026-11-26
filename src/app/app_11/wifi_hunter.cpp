@@ -251,7 +251,9 @@ void WifiHunter::captureFailed() {
     while (_queue && xQueueReceive(_queue,&frame,0)==pdTRUE) {
         portENTER_CRITICAL(&mux); ++live.dropped; portEXIT_CRITICAL(&mux);
     }
-    _file.close(); fail("SD write/sync failed",ESP_FAIL);
+    const int code=_file.errorCode();
+    snprintf(_error,sizeof(_error),"SD %s: %s (%d)",_file.operation(),strerror(code),code);
+    _file.close(); Serial.printf("[MeowGotchi] %s\n",_error);
 }
 bool WifiHunter::syncCapture() {
     if (!_file) return true;

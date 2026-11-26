@@ -9,8 +9,7 @@ using namespace meowgotchi;
 App11::App11(DEVICES* device) : _device(device) { setAppInfo().name="MeowGotchi"; }
 
 void App11::onOpen() {
-    // The launcher owns SD mounting. Do not remount or format it here.
-    _hunter.begin(SD_MMC.cardType()!=CARD_NONE);
+    _hunter.begin(_device->sd.begin());
     _canvas=new (std::nothrow) lgfx::LGFX_Sprite(&_device->Lcd);
     _haveCanvas=false;
     if (_canvas) {
@@ -38,7 +37,9 @@ void App11::activate() {
         case Page::Menu:
             switch (_selected) {
                 case 0: toggleRun(); break;
-                case 1: _hunter.setCapture(!_hunter.capturing()); break;
+                case 1:
+                    if (!_hunter.capturing()) _hunter.setStorageReady(_device->sd.begin());
+                    _hunter.setCapture(!_hunter.capturing()); break;
                 case 2: page(Page::Networks); break;
                 case 3:
                     if (_hunter.aggressive()) _hunter.setAggressive(false);
@@ -138,9 +139,10 @@ template<class LCD> void App11::render(LCD& lcd) {
             else mood=MeowGotchi::Mood::Bored;
         }
         MeowGotchi::drawCat(lcd,160,96,mood,now%3200<140);
-        text(154,_hunter.error()[0] ? "Error - see Menu > Counters" :
+        text(154,_hunter.error()[0] ? _hunter.error() :
             !_hunter.running() ? "Paused - press A to start" :
-            _hunter.aggressive() ? "Active on selected network" : "Listening to nearby Wi-Fi",MK_PAL::ACCENT);
+            _hunter.aggressive() ? "Active on selected network" :
+            (s.aps && !s.eapol) ? "Networks found; waiting for logins" : "Listening to nearby Wi-Fi",MK_PAL::ACCENT);
         snprintf(line,sizeof(line),"EAPOL:%lu  Pairs:%lu",(unsigned long)s.eapol,(unsigned long)s.pairs); text(180,line);
         snprintf(line,sizeof(line),"%lum %02lus   PCAP %s",(unsigned long)(_hunter.uptime()/60),
             (unsigned long)(_hunter.uptime()%60),_hunter.capturing()?"ON":"OFF"); text(201,line,MK_PAL::TEXT_SEC);
@@ -151,7 +153,7 @@ template<class LCD> void App11::render(LCD& lcd) {
         MK_TUI::drawMenuItem(lcd,2,"Target network",_hunter.targetIndex()>=0?"SELECTED":"NONE",_selected==2);
         MK_TUI::drawMenuItem(lcd,3,"Active test",_hunter.aggressive()?"ON":"OFF",_selected==3);
         MK_TUI::drawMenuItem(lcd,4,"Counters / errors","OPEN",_selected==4);
-        text(194,_hunter.error()[0]?"Error - open Counters / errors":"Hold B to exit",_hunter.error()[0]?MK_PAL::ERR:MK_PAL::TEXT_SEC);
+        text(194,_hunter.error()[0]?_hunter.error():"Hold B to exit",_hunter.error()[0]?MK_PAL::ERR:MK_PAL::TEXT_SEC);
         MK_TUI::drawFooter(lcd,"Select","Face");
     } else if (_page==Page::Networks) {
         if (!s.aps) { text(65,"No networks seen yet."); text(90,"Start listening from the menu."); }
