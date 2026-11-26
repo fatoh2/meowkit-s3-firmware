@@ -24,9 +24,9 @@ public:
 private:
     enum class Scene : uint8_t {
         Main, Files, Remote, Learn, Result, Discard, Name, Edit, ButtonSelect,
-        Move, Delete, Universal, Loading, Panel, Actions, Scan, Message
+        Move, Delete, Universal, Loading, Panel, Actions, Scan, SaveScan, Message
     };
-    enum class NameFor : uint8_t { Learn, Button, Remote };
+    enum class NameFor : uint8_t { Learn, Button, Remote, ScanRemote, ScanButton };
     enum class EditFor : uint8_t { Rename, Move, Delete };
     struct Input {
         bool up = false, down = false, left = false, right = false;
@@ -34,7 +34,10 @@ private:
     } _input;
     meow_ir::DirectionRepeat _directionRepeat[4];
     struct Item { String title, subtitle; };
-    struct Frame { Scene scene; int selected, top; String directory; };
+    struct Frame {
+        Scene scene; int selected, top; String directory;
+        bool libraryBrowser=false,saveDestination=false;
+    };
     struct LibraryRecord { uint16_t action; uint32_t offset; };
 
     DEVICES* _device;
@@ -46,6 +49,8 @@ private:
     String _directory = "/infrared";
     std::vector<String> _entries;
     bool _libraryBrowser = false;
+    bool _saveScanToExisting=false;
+    meow_ir::Signal _scanSignal;
 
     std::vector<meow_ir::Signal> _signals;
     String _remotePath, _remoteName;
@@ -115,7 +120,7 @@ private:
     void _updateLed();
     void _message(const char* title, const String& detail, uint32_t duration = 0);
     bool _navigate();
-    void _openFiles(bool library);
+    void _openFiles(bool library,bool saveDestination=false);
     void _refreshFiles();
     void _startLearn(bool newRemote);
     void _receive();
@@ -129,6 +134,8 @@ private:
     void _loadCategory(int category);
     void _startScan(const String& name);
     void _runScan();
+    void _beginScanSave();
+    void _saveScanSignal(const char* name,bool newRemote);
 
     bool _loadRemote(const String& path);
     bool _writeRemote(const String& path, const std::vector<meow_ir::Signal>& signals, bool create);

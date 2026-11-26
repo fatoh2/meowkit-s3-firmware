@@ -1,16 +1,21 @@
 #include "infrared.h"
 #include "infrared_categories.h"
 #include "infrared_ui_data.h"
+#include "infrared_saved_signal.h"
 #include <cstring>
 #include <cctype>
 
 namespace MOONCAKE::APPS {
 using namespace meow_ir::ui;
-void App09::_openFiles(bool library) {
+void App09::_openFiles(bool library,bool saveDestination) {
     if (!_storageReady()) { _message("SD Unavailable",_lastError); return; }
+    // Capture the caller's mode before entering the destination picker. Back
+    // must restore a library browser as a library browser, not a remote list.
+    _history.push_back({_scene,_selected,_top,_directory,_libraryBrowser,_saveScanToExisting});
     _libraryBrowser = library;
+    _saveScanToExisting=saveDestination;
     _directory = "/infrared";
-    _push(Scene::Files);
+    _setScene(Scene::Files);
 }
 void App09::_startLearn(bool newRemote) {
     _learningNew = newRemote;
@@ -38,10 +43,14 @@ bool App09::_duplicateName(const char* name, int except) const {
     return false;
 }
 void App09::_commitName() {
-    const bool valid = _nameFor == NameFor::Remote ? infrared_file::validName(_name) : infrared_file::validButtonName(_name);
+    const bool remoteName=_nameFor==NameFor::Remote || _nameFor==NameFor::ScanRemote;
+    const bool valid = remoteName ? infrared_file::validName(_name) : infrared_file::validButtonName(_name);
     if (!valid) {
-        _message("Invalid Name", _nameFor == NameFor::Remote ? "Avoid / \\ : * ? \" < > | and trailing dots/spaces" : "Use a name without leading/trailing spaces");
+        _message("Invalid Name", remoteName ? "Avoid / \\ : * ? \" < > | and trailing dots/spaces" : "Use a name without leading/trailing spaces");
         return;
+    }
+    if (_nameFor==NameFor::ScanRemote || _nameFor==NameFor::ScanButton) {
+        _saveScanSignal(_name,_nameFor==NameFor::ScanRemote); return;
     }
     if (_nameFor == NameFor::Remote) {
         if (!_renameRemote(_name)) { _message("Rename Failed", _lastError); return; }
@@ -121,7 +130,7 @@ void App09::_runScan() {
         return;
     }
     if (_input.a) {
-        if (!_scan.paused) { _stopTx(); _scanPending = false; _scan.pause(); _dirty = true; }
+        if (!_scan.paused) { _stopTx(); _scan.pause(_scanPending); _scanPending = false; _dirty = true; }
         else if (!_txBusy) {
             meow_ir::Signal signal;
             if (!_readRecord(_records[_queue[_scan.index]], signal)) { _message("Read Failed", _lastError); return; }
@@ -129,6 +138,7 @@ void App09::_runScan() {
         }
     }
     if (_scan.paused) {
+        if (_input.down) { _beginScanSave(); return; }
         if (_input.left) { _scan.move(-1); _dirty = true; }
         if (_input.right) { _scan.move(1); _dirty = true; }
         if (_input.up && !_txBusy) { _scan.resume(); _lastScan = millis(); _dirty = true; }
@@ -149,6 +159,29 @@ void App09::_runScan() {
         _scanPending = true;
     }
 }
+void App09::_beginScanSave() {
+    if (_txBusy.load()) { _message("Please Wait","Wait for the current transmission",1200); return; }
+    if (!_scan.paused || _scan.index>=_queue.size() || _queue[_scan.index]>=_records.size()) return;
+    meow_ir::Signal selected;
+    if (!_readRecord(_records[_queue[_scan.index]],selected)) { _message("Read Failed",_lastError); return; }
+    if (!_storageReady()) { _message("Save Failed",_lastError); return; }
+    _scanSignal=std::move(selected); _scanPending=false; _stopTx();
+    _push(Scene::SaveScan);
+}
+void App09::_saveScanSignal(const char* name,bool newRemote) {
+    const String path=newRemote ? String("/infrared/remote/")+name+".ir" : _remotePath;
+    std::vector<meow_ir::Signal> saved;
+    std::string error;
+    if (!meow_ir::appendSavedButton(newRemote?std::vector<meow_ir::Signal>{}:_signals,
+            _scanSignal,newRemote?_scanSignal.name:std::string(name),saved,error)) {
+        _message("Save Failed",error.c_str()); return;
+    }
+    if (!_writeRemote(path,saved,newRemote)) { _message("Save Failed",_lastError); return; }
+    _signals=std::move(saved); _remotePath=path;
+    _remoteName=path.substring(path.lastIndexOf('/')+1); _remoteName.remove(_remoteName.length()-3);
+    _learningNew=false; _saveScanToExisting=false; _scan.running=false; _scanPending=false;
+    _returnTo(Scene::Remote); _message("Saved",_signals.back().name.c_str(),1500);
+}
 bool App09::_navigate() {
     const int delta = (_input.down ? 1 : 0) - (_input.up ? 1 : 0);
     if (!delta) return false;
@@ -161,6 +194,7 @@ bool App09::_navigate() {
     return true;
 }
 void App09::_back() {
+    if (_scene==Scene::Files) _saveScanToExisting=false;
     if (_scene == Scene::Main) { close(); return; }
     if (_scene == Scene::Result) { _discardRetry = false; _push(Scene::Discard); return; }
     if (_scene == Scene::Learn) { _returnTo(_learnOrigin); return; }
@@ -219,7 +253,7 @@ void App09::_run() {
         _runHeld(_signals[_selected]);
         if (_scene != Scene::Remote) return;
     }
-    if (_scene == Scene::Files && _input.right && !_libraryBrowser && !_entries.empty()) {
+    if (_scene == Scene::Files && _input.right && !_libraryBrowser && !_saveScanToExisting && !_entries.empty()) {
         const auto& entry = _entries[_selected];
         if (entry == "..") return;
         _deleteFolder = entry.endsWith("/"); _deleteRemote = true;
@@ -249,6 +283,12 @@ void App09::_activate() {
                 entry.remove(entry.length() - 1);
                 if (_directory.length() + entry.length() > 210) { _message("Path Too Long", "Choose a shorter folder path"); break; }
                 _directory += "/" + entry; _selected = _top = 0; _refreshFiles(); _dirty = true;
+            } else if (_saveScanToExisting) {
+                if (!_loadRemote(_directory+"/"+entry)) { _message("Remote Error",_lastError); break; }
+                char initial[24]; snprintf(initial,sizeof(initial),"%s",_scanSignal.name.c_str());
+                for (unsigned n=2;_duplicateName(initial) && n<1000;++n)
+                    snprintf(initial,sizeof(initial),"%.18s_%u",_scanSignal.name.c_str(),n);
+                _beginName(NameFor::ScanButton,initial);
             } else if (_libraryBrowser) {
                 if (!_beginLibraryLoad(_directory + "/" + entry, Scene::Actions)) _message("Library Error", _lastError);
             } else {
@@ -323,6 +363,10 @@ void App09::_activate() {
         case Scene::Universal:
             _universalSelected = _selected;
             if (_selected == 9) _openFiles(true); else _loadCategory(_selected);
+            break;
+        case Scene::SaveScan:
+            if (_selected==0) _beginName(NameFor::ScanRemote,_category==0?"TV":meow_ir::Categories[_category].file);
+            else _openFiles(false,true);
             break;
         case Scene::Panel: _startScan(meow_ir::Categories[_category].actions[_selected]); break;
         case Scene::Actions: if (!_actions.empty()) _startScan(_actions[_selected]); break;

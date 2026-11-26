@@ -10,6 +10,7 @@ using namespace meow_ir::ui;
 App09::App09(DEVICES* device) : _device(device) { setAppInfo().name = "Infrared"; }
 
 void App09::onOpen() {
+    _libraryBrowser=false; _saveScanToExisting=false; _scanSignal={};
     _signals.clear(); _records.clear(); _actions.clear(); _queue.clear(); _history.clear();
     _moveBackup.clear(); _entries.clear();
     _remotePath = _remoteName = "";
@@ -55,6 +56,7 @@ void App09::onClose() {
     _decoder = nullptr;
     _device->led.off();
     _signals.clear(); _learned = {}; _txSignal = {};
+    _scanSignal={}; _saveScanToExisting=false;
     _records.clear(); _queue.clear(); _actions.clear(); _moveBackup.clear();
     _entries.clear(); _items.clear(); _history.clear();
 }
@@ -67,13 +69,14 @@ void App09::_setScene(Scene scene) {
     _enter();
 }
 void App09::_push(Scene scene) {
-    _history.push_back({_scene, _selected, _top, _directory});
+    _history.push_back({_scene, _selected, _top, _directory,_libraryBrowser,_saveScanToExisting});
     _setScene(scene);
 }
 void App09::_pop() {
     if (_history.empty()) { _setScene(Scene::Main); return; }
     auto frame = _history.back(); _history.pop_back();
     _directory = frame.directory;
+    _libraryBrowser=frame.libraryBrowser; _saveScanToExisting=frame.saveDestination;
     _setScene(frame.scene);
     _selected = frame.selected; _top = frame.top;
     if (!_items.empty()) meow_ir::listMove(0, _items.size(), _listVisible(), _selected, _top);
@@ -83,12 +86,14 @@ void App09::_returnTo(Scene scene) {
         if (_history[i].scene != scene) continue;
         auto frame = _history[i]; _history.resize(i);
         _directory = frame.directory;
+        _libraryBrowser=frame.libraryBrowser; _saveScanToExisting=frame.saveDestination;
         _setScene(scene);
         _selected = frame.selected; _top = frame.top;
         if (!_items.empty()) meow_ir::listMove(0, _items.size(), _listVisible(), _selected, _top);
         return;
     }
     _history.clear();
+    _libraryBrowser=false; _saveScanToExisting=false;
     if (scene != Scene::Main) _history.push_back({Scene::Main, _mainSelected, 0, "/infrared"});
     _setScene(scene);
 }
@@ -155,6 +160,10 @@ void App09::_enter() {
             _selected = _universalSelected; break;
         case Scene::Actions:
             for (const auto& action : _actions) _items.push_back({action, "Scan every matching record"});
+            break;
+        case Scene::SaveScan:
+            _items={{"Create new remote","Name it and save this button"},
+                    {"Add to saved remote","Keep its existing buttons"}};
             break;
         default: break;
     }

@@ -1,6 +1,7 @@
 #pragma once
 #include <momentum_ir.h>
 #include "infrared_file_utils.h"
+#include "infrared_scan.h"
 #include <cerrno>
 #include <cmath>
 #include <cstdio>
@@ -161,18 +162,6 @@ inline void listMove(int delta, int count, int visible, int& selected, int& top)
     if (selected < top) top = selected;
     if (selected >= top + visible) top = selected - visible + 1;
 }
-
-struct Scan {
-    size_t index = 0, total = 0;
-    bool running = false, paused = false;
-    void start(size_t count) { index = 0; total = count; running = count > 0; paused = false; }
-    void pause() { if (running) { paused = true; if (index) --index; } }
-    void resume() { if (running) paused = false; }
-    void move(int delta) {
-        if (paused && total) index = size_t(std::max(0, std::min(int(total) - 1, int(index) + delta)));
-    }
-    void sent() { if (running && !paused && ++index >= total) running = false; }
-};
 
 struct DirectionRepeat {
     bool held = false;

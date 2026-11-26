@@ -45,7 +45,7 @@ void App09::_drawButton(int x, int y, int w, int h, const char* label,
 void App09::_drawList(const char* title, const char* action) {
     auto& lcd = _device->Lcd;
     hp::drawHeader(lcd, title, _drawnTxBusy ? "TX" : nullptr, hp::COL_WARN);
-    _drawFooter(_scene == Scene::Files && !_libraryBrowser ? "^v R:Del" : "[^v]Select", action,
+    _drawFooter(_scene == Scene::Files && !_libraryBrowser && !_saveScanToExisting ? "^v R:Del" : "[^v]Select", action,
                 _scene == Scene::Main ? "Exit" : "Back");
     const int count = _items.size();
     const bool single = _singleLineList();
@@ -71,7 +71,8 @@ void App09::_draw() {
     lcd.setFont(&fonts::efontCN_16);
     switch (_scene) {
         case Scene::Main: _drawList("Infrared", "Enter"); break;
-        case Scene::Files: _drawList(_libraryBrowser ? "Library File" : "Saved Remotes"); break;
+        case Scene::Files: _drawList(_saveScanToExisting?"Add Signal To":_libraryBrowser ? "Library File" : "Saved Remotes"); break;
+        case Scene::SaveScan: _drawList("Save Working Signal","Choose"); break;
         case Scene::Remote: _drawList(clipped(_remoteName, 24).c_str(), _selected < int(_signals.size()) ? "Hold" : "Enter"); break;
         case Scene::Edit: _drawList("Edit Remote", "Select"); break;
         case Scene::ButtonSelect: _drawList(_editFor == EditFor::Rename ? "Rename Button" : "Delete Button", "Select"); break;
@@ -80,7 +81,9 @@ void App09::_draw() {
         case Scene::Actions: _drawList(clipped(_libraryTitle, 24).c_str(), "Scan"); break;
         case Scene::Name:
             hp::drawHeader(lcd, _nameFor == NameFor::Learn ? "Name the Button" :
-                _nameFor == NameFor::Button ? "Rename Button" : "Rename Remote");
+                _nameFor == NameFor::Button ? "Rename Button" :
+                _nameFor == NameFor::ScanButton ? "Name the Button" :
+                _nameFor == NameFor::ScanRemote ? "Name New Remote" : "Rename Remote");
             _drawFooter("^v<> Move", _key == KeySave ? "Save" : "Key", "Back");
             _drawNameKeyboard();
             break;
@@ -149,8 +152,9 @@ void App09::_draw() {
             hp::drawStat(lcd, 2, "State", _scan.paused ? "Paused / manual test" : "Scanning library");
             hp::drawProgress(lcd, 12, 126, 296, _scan.total ? float(current) / _scan.total : 0.0f, hp::COL_FG);
             if (_scan.paused) {
-                lcd.setCursor(12, 164); lcd.print("Left / Right: Select signal");
-                lcd.setCursor(12, 186); lcd.print("Up: Resume scanning");
+                lcd.setCursor(12, 158); lcd.print("Left/Right: Select   A: Test");
+                lcd.setCursor(12, 180); lcd.print("Down: Save working signal");
+                lcd.setCursor(12, 200); lcd.print("Up: Resume scanning");
             }
             break;
         }

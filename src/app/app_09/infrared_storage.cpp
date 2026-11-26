@@ -100,6 +100,10 @@ bool App09::_writeRemote(const String& path, const std::vector<meow_ir::Signal>&
     std::string folderError;
     const std::string parent=std::string(path.c_str()).substr(0,path.lastIndexOf('/'));
     if (!meow_storage::ensureDirectory(SD_MMC,parent,folderError)) {
+        Serial.printf("[Infrared] Folder preparation for %s: %s; free=%llu total=%llu\n",
+            path.c_str(),folderError.c_str(),
+            (unsigned long long)(SD_MMC.totalBytes()-SD_MMC.usedBytes()),
+            (unsigned long long)SD_MMC.totalBytes());
         _lastError=folderError.c_str(); return false;
     }
     if (path.length() > 220 || signals.size() > meow_ir::MaxButtons) { _lastError = "Remote too large"; return false; }
