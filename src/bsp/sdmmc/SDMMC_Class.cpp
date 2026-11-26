@@ -2,14 +2,9 @@
  * @file SDMMC_Class.cpp
  * @brief SDMMC implementation with multi-frequency auto-negotiation.
  *
- * Frequency ladder (1-bit, most compatible):
- *   40 MHz — fast cards (Samsung/SanDisk U3, A2)
- *   20 MHz — standard high-speed (class 10)
- *   10 MHz — generic class 6 / cheap clone cards
- *    5 MHz — very slow / edge-case cards, also helps at cold boot
- *
- * The ESP32-S3 SDMMC controller uses internal CLK; no external 50-Ω
- * impedance matching is needed for 1-bit mode below 25 MHz.
+ * Frequency ladder (1-bit): 10 MHz, 5 MHz, then 1 MHz.
+ * Arduino's begin() accepts kHz. Healthy mounts remain open; stale mounts
+ * are released before retrying, and USB MSC keeps exclusive raw ownership.
  */
 #include "SDMMC_Class.hpp"
 #include "../config.h"

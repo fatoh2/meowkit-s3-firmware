@@ -27,7 +27,10 @@ resumes a previously connected/connecting station. Settings scans and AP mode
 are reported busy. Capture stays enabled across pauses, but each resumed
 capture uses a new PCAP with fresh advertisements. Settings credentials are
 never erased or rewritten by this app. Restoration errors are reported and
-retained for retry. The launcher retains SD ownership.
+retained for retry. The shared SD helper mounts late-inserted cards without
+formatting, adopts healthy mounts, and refuses filesystem access during USB
+mass-storage mode. Enabling capture rechecks storage, so an SD error can be
+retried after correcting the card without resetting the session counters.
 
 ## Limits and validation
 
@@ -39,11 +42,13 @@ the pair counter counts each tracked AP/station link once. PCAP records raw
 boot, not wall-clock time. Only complete frames up to 2304 bytes are saved.
 Discovery is bounded to 96 APs, 128 stations and 32 candidate pair trackers.
 Frames arriving faster than SD writes can drain the 16-frame queue are counted
-as dropped. The saved count advances after a checked flush and filesystem sync.
+as dropped. The saved count advances after a checked filesystem sync.
 Capture buffers are synced each second and closed on pause/exit;
 power loss may lose buffered data. Driver checks/errors remain visible.
-SD status reflects availability at app open and any subsequent write/sync
-failure; it is not a hot-plug monitor. Reopen after fixing storage to retry.
+SD status reflects the last storage check and any subsequent write/sync
+failure. Errors include the failed operation and filesystem error number.
+The writer uses open/write/fsync/close directly: the pinned FAT implementation
+does not support the fcntl call required by Newlib's fdopen.
 
 The active-mode SDK hook is pinned to ESP-IDF 4.4.3. Only the exact frame buffer
 submitted synchronously by the owning app task for the selected BSSID bypasses
