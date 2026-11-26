@@ -31,7 +31,11 @@ void App09::_receive() {
     if (!_rxEnabled) return;
     decode_results results;
     if (!_receiver->decode(&results)) return;
-    if (results.overflow || results.rawlen < 3) { _receiver->resume(); return; }
+    if (results.overflow || results.rawlen < 3) {
+        Serial.printf("[Infrared RX] rejected: overflow=%u rawlen=%u\n",
+            unsigned(results.overflow),unsigned(results.rawlen));
+        _receiver->resume(); return;
+    }
     meow_ir::Signal received;
     received.name = "Signal";
     received.raw = true;
@@ -59,6 +63,12 @@ void App09::_receive() {
     if (!meow_ir::validSignal(received)) { _receiver->resume(); return; }
     _learned = std::move(received);
     _stopRx();
+    Serial.printf("[Infrared RX] native=%s bits=%u rawlen=%u mode=%u\n",
+        typeToString(results.decode_type).c_str(),unsigned(results.bits),
+        unsigned(results.rawlen),unsigned(_decodeMode));
+    // Preserve the actual capture in USB logs for diagnosing multipart AC
+    // frames, even before the user chooses a name or writes a remote file.
+    Serial.print(meow_ir::serialize(_learned).c_str());
     _push(Scene::Result);
     _ledUntil = millis() + 200;
 }
@@ -108,6 +118,8 @@ void App09::_txWorker() {
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
         if (_txShutdown.load()) break;
         const auto& signal = _txSignal;
+        Serial.printf("[Infrared TX] name=%s raw=%u timings=%u repeat=%u\n",
+            signal.name.c_str(),unsigned(signal.raw),unsigned(signal.timings.size()),unsigned(_txRepeat));
         bool ok = true;
         if (signal.raw) {
             _sender->enableIROut(signal.frequency, uint8_t(signal.duty * 100));
@@ -156,6 +168,8 @@ void App09::_txWorker() {
             ok = protocol != UNKNOWN && _sender->send(protocol, signal.legacyValue, signal.legacyBits);
         }
         _sender->space(0);
+        Serial.printf("[Infrared TX] complete: ok=%u cancelled=%u\n",
+            unsigned(ok),unsigned(_txCancel.load()));
         _txSucceeded.store(ok);
         _txBusy.store(false);
     }
