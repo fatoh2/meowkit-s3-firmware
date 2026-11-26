@@ -131,6 +131,9 @@ void App09::_txWorker() {
         const auto& signal = _txSignal;
         Serial.printf("[Infrared TX] name=%s raw=%u timings=%u repeat=%u\n",
             signal.name.c_str(),unsigned(signal.raw),unsigned(signal.timings.size()),unsigned(_txRepeat));
+        if(!signal.raw) Serial.printf("[Infrared TX] protocol=%s bits=%u value=0x%llX state_bytes=%u\n",
+            signal.protocol==InfraredProtocolUnknown?signal.legacyProtocol.c_str():infrared_get_protocol_name(signal.protocol),
+            unsigned(signal.legacyBits),static_cast<unsigned long long>(signal.legacyValue),unsigned(signal.legacyState.size()));
         bool ok = true;
         if (signal.raw) {
             _sender->enableIROut(signal.frequency, uint8_t(signal.duty * 100));

@@ -18,10 +18,49 @@ void App09::_openFiles(bool library,bool saveDestination) {
     _setScene(Scene::Files);
 }
 void App09::_startLearn(bool newRemote) {
+    _powerLearning=_powerHaveOn=false; _powerOn={};
     _learningNew = newRemote;
     _learnOrigin = newRemote ? Scene::Main : Scene::Remote;
     _easyIndex = 0; _nextEasy();
     _push(Scene::Learn);
+}
+void App09::_startPowerLearn(bool newRemote) {
+    _startLearn(newRemote); _powerLearning=true; _easy=false;
+}
+void App09::_keepPowerCapture() {
+    if(!_powerHaveOn) {
+        _powerOn=_learned; _powerHaveOn=true; _returnTo(Scene::Learn); return;
+    }
+    meow_ir::Signal pair; std::string error;
+    if(!meow_ir::makePowerPair(_powerOn,_learned,pair,error)) {
+        _returnTo(Scene::Learn); _message("Retry OFF Capture",error.c_str()); return;
+    }
+    _learned=std::move(pair); _beginName(NameFor::Power,"Power");
+}
+void App09::_runPower(meow_ir::Signal& signal) {
+    if(_input.rightEdge) {
+        signal.powerNextOn=!signal.powerNextOn;
+        const bool saved=_writeRemote(_remotePath,_signals,false);
+        _enter(); _dirty=true;
+        if(!saved) _message("State Not Saved",_lastError);
+        return;
+    }
+    const auto* command=_powerPress.begin(signal,_input.a,_txBusy.load());
+    if(!command) return;
+    if(_startTx(*command)) _powerSignalIndex=_selected;
+    else { _powerPress.finish(signal,false); _message("Send Failed","IR transmitter unavailable"); }
+}
+void App09::_finishPowerSend() {
+    if(_txBusy.load()) return;
+    const int index=_powerSignalIndex; _powerSignalIndex=-1;
+    if(index<0 || size_t(index)>=_signals.size()) { _powerPress={}; return; }
+    const bool success=_txSucceeded.exchange(true) && !_txCancel.load();
+    if(!_powerPress.finish(_signals[index],success)) {
+        _message("Send Interrupted","Next command unchanged; > can resync"); return;
+    }
+    const bool saved=_writeRemote(_remotePath,_signals,false);
+    _enter(); _dirty=true;
+    if(!saved) _message("Sent; State Not Saved",_lastError);
 }
 void App09::_nextEasy() {
     if (_easyIndex >= EasyCount) _easyIndex = 0;
@@ -60,7 +99,7 @@ void App09::_commitName() {
         _duplicateName(_name, _nameFor == NameFor::Button ? _editIndex : -1)) {
         _message("Name Exists", "Choose another button name"); return;
     }
-    if (_nameFor == NameFor::Learn) { _learned.name = _name; _finishLearn(); }
+    if (_nameFor == NameFor::Learn || _nameFor==NameFor::Power) { _learned.name = _name; _finishLearn(); }
     else {
         auto changed = _signals; changed[_editIndex].name = _name;
         if (!_writeRemote(_remotePath, changed, false)) { _message("Save Failed", _lastError); return; }
@@ -83,6 +122,7 @@ void App09::_finishLearn() {
     _signals = std::move(changed); _remotePath = path;
     _remoteName = path.substring(path.lastIndexOf('/') + 1); _remoteName.remove(_remoteName.length() - 3);
     _learningNew = false;
+    _powerLearning=_powerHaveOn=false; _powerOn={};
     _returnTo(Scene::Remote); _message("Saved", _learned.name.c_str(), 1500);
 }
 void App09::_loadCategory(int category) {
@@ -194,14 +234,16 @@ bool App09::_navigate() {
     return true;
 }
 void App09::_back() {
+    if(_scene==Scene::Name && _nameFor==NameFor::Power) { _returnTo(Scene::Learn); return; }
     if (_scene==Scene::Files) _saveScanToExisting=false;
     if (_scene == Scene::Main) { close(); return; }
     if (_scene == Scene::Result) { _discardRetry = false; _push(Scene::Discard); return; }
-    if (_scene == Scene::Learn) { _returnTo(_learnOrigin); return; }
+    if (_scene == Scene::Learn) { _powerLearning=_powerHaveOn=false; _powerOn={}; _returnTo(_learnOrigin); return; }
     if (_scene == Scene::Move) { _signals = std::move(_moveBackup); _moveIndex = -1; _pop(); return; }
     _pop();
 }
 void App09::_run() {
+    if(_powerSignalIndex>=0) { _finishPowerSend(); return; }
     if (_scene == Scene::Loading) { _runLibraryLoad(); return; }
     if (_scene == Scene::Scan) { _runScan(); return; }
     if (_scene == Scene::Message && _messageUntil && int32_t(millis() - _messageUntil) >= 0) { _pop(); return; }
@@ -210,6 +252,7 @@ void App09::_run() {
         if (_scene != Scene::Result) return;
         if (_input.left) { _discardRetry = true; _push(Scene::Discard); return; }
         if (_input.right) {
+            if(_powerLearning) { _keepPowerCapture(); return; }
             char initial[24];
             if (_easy) snprintf(initial, sizeof(initial), "%s", EasyNames[_easyIndex]);
             else if (_learned.raw) snprintf(initial, sizeof(initial), "RAW_%u", unsigned(_learned.timings.size()));
@@ -223,11 +266,11 @@ void App09::_run() {
         if (_input.right) {
             _decodeMode = (_decodeMode + 1) % 3; _writeSettings(); _dirty = true;
         }
-        if (_input.left) {
+        if (_input.left && !_powerLearning) {
             _easy = !_easy; _writeSettings();
             _dirty = true;
         }
-        if (_easy && _input.a) {
+        if (_easy && !_powerLearning && _input.a) {
             _easyIndex = std::min(_easyIndex + 1, EasyCount - 1); _nextEasy(); _dirty = true;
         }
         _receive();
@@ -250,7 +293,8 @@ void App09::_run() {
         if (next != _selected) { _selected = next; _dirty = true; }
     } else _navigate();
     if (_scene == Scene::Remote && _selected < int(_signals.size())) {
-        _runHeld(_signals[_selected]);
+        if(_signals[_selected].powerOff) _runPower(_signals[_selected]);
+        else _runHeld(_signals[_selected]);
         if (_scene != Scene::Remote) return;
     }
     if (_scene == Scene::Files && _input.right && !_libraryBrowser && !_saveScanToExisting && !_entries.empty()) {
@@ -271,6 +315,7 @@ void App09::_activate() {
                 case 0: _push(Scene::Universal); break;
                 case 1: _startLearn(true); break;
                 case 2: _openFiles(false); break;
+                case 3: _startPowerLearn(true); break;
             }
             break;
         case Scene::Files: {
@@ -300,6 +345,7 @@ void App09::_activate() {
         case Scene::Remote:
             if (_selected == int(_signals.size())) _startLearn(false);
             else if (_selected == int(_signals.size()) + 1) _push(Scene::Edit);
+            else if (_selected == int(_signals.size()) + 2) _startPowerLearn(false);
             break;
         case Scene::Edit:
             if (_selected == 0) _startLearn(false);
@@ -339,7 +385,8 @@ void App09::_activate() {
             break;
         }
         case Scene::Discard:
-            if (_discardRetry) _returnTo(Scene::Learn); else _returnTo(_learnOrigin);
+            if (_discardRetry) _returnTo(Scene::Learn);
+            else { _powerLearning=_powerHaveOn=false; _powerOn={}; _returnTo(_learnOrigin); }
             break;
         case Scene::Delete: {
             bool ok;

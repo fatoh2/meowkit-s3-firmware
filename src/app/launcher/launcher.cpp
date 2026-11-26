@@ -43,6 +43,10 @@
  * ═══════════════════════════════════════════════════════
  */
 #include "launcher.h"
+extern "C" {
+#include "ff.h"
+#include "diskio.h"
+}
 #include "../app.h"
 #include "../../bsp/porting/lv_port_disp.h"
 #include "../../bsp/porting/lv_port_indev.h"
@@ -457,6 +461,21 @@ void Launcher::initSD()
                   (unsigned long long)(SD_MMC.totalBytes() / (1024 * 1024)),
                   (unsigned long long)(SD_MMC.usedBytes()  / (1024 * 1024)));
     _sd_ready = true;
+    // Read-only layout diagnostics: compare the mounted FAT volume with
+    // the physical MBR/BPB seen by USB hosts. Never repair or format here.
+    FATFS* layoutFs=nullptr; DWORD layoutFree=0;
+    if(f_getfree("0:",&layoutFree,&layoutFs)==FR_OK && layoutFs)
+        Serial.printf("[SD LAYOUT] volbase=%lu fatbase=%lu database=%lu clusters=%lu csize=%u\n",
+            (unsigned long)layoutFs->volbase,(unsigned long)layoutFs->fatbase,
+            (unsigned long)layoutFs->database,(unsigned long)layoutFs->n_fatent,unsigned(layoutFs->csize));
+    uint8_t layoutSector[512]; char layoutHex[1025];
+    for(const DWORD sector:{DWORD(0),DWORD(16)}) {
+        if(disk_read(0,layoutSector,sector,1)!=RES_OK) { Serial.printf("[SD LAYOUT] read %lu failed\n",(unsigned long)sector); continue; }
+        static const char digits[]="0123456789ABCDEF";
+        for(size_t i=0;i<sizeof(layoutSector);++i) { layoutHex[2*i]=digits[layoutSector[i]>>4]; layoutHex[2*i+1]=digits[layoutSector[i]&15]; }
+        layoutHex[1024]=0;
+        Serial.printf("[SD LAYOUT] sector=%lu hex=%s\n",(unsigned long)sector,layoutHex);
+    }
     probeSdWrites();
 }
 

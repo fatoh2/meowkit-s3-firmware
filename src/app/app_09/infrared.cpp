@@ -18,6 +18,7 @@ void App09::onOpen() {
     _mainSelected = _universalSelected = 0;
     _scan = {}; _scanPending = false; _holdLatched = false;
     _learned = {}; _rxEnabled = false;
+    _powerLearning=_powerHaveOn=false; _powerOn={}; _powerPress={}; _powerSignalIndex=-1;
     _ledActive = _ledOn = false;
     _device->led.off();
     _sender = new IRsend(HAL_PIN_IR_TX);
@@ -56,6 +57,7 @@ void App09::onClose() {
     _decoder = nullptr;
     _device->led.off();
     _signals.clear(); _learned = {}; _txSignal = {};
+    _powerOn={}; _powerLearning=_powerHaveOn=false; _powerPress={}; _powerSignalIndex=-1;
     _scanSignal={}; _saveScanToExisting=false;
     _records.clear(); _queue.clear(); _actions.clear(); _moveBackup.clear();
     _entries.clear(); _items.clear(); _history.clear();
@@ -124,6 +126,7 @@ void App09::_sampleInput() {
         return;
     }
     _input.a = a; _input.b = back; _input.held = held;
+    _input.rightEdge=right;
     if (_scene != Scene::Learn && _scene != Scene::Result) {
         const uint32_t now = millis();
         up = _directionRepeat[0].poll(b.Up.state() == Button_Class::PRESSED, up, now);
@@ -139,13 +142,15 @@ void App09::_enter() {
         case Scene::Main:
             _items = {{"Universal Remotes", ""},
                       {"Learn New Remote", ""},
-                      {"Saved Remotes", ""}};
+                      {"Saved Remotes", ""}, {"Learn Power Toggle","Capture separate On and Off"}};
             _selected = _mainSelected; break;
         case Scene::Files: _refreshFiles(); break;
         case Scene::Remote:
-            for (const auto& s : _signals) _items.push_back({s.name.c_str(), protocolName(s)});
+            for (const auto& s : _signals) _items.push_back({s.name.c_str(),s.powerOff?
+                (s.powerNextOn?"Next: On  |  > change":"Next: Off  |  > change"):protocolName(s)});
             _items.push_back({"+ Add Button", "Learn into this remote"});
-            _items.push_back({"Edit", "Rename / reorder / delete"}); break;
+            _items.push_back({"Edit", "Rename / reorder / delete"});
+            _items.push_back({"+ Power Toggle","Learn On and Off into one button"}); break;
         case Scene::Edit:
             _items = {{"Add Button", "Learn into this remote"}, {"Rename Button", "Change a button name"},
                 {"Move Button", "Change button order"}, {"Delete Button", "Remove one signal"},

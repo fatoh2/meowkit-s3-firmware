@@ -87,6 +87,9 @@ bool App09::_loadRemote(const String& path) {
         file.seek(next);
         meow_ir::Signal signal;
         if (!readRecord(file, signal, _lastError)) return false;
+        Serial.printf("[Infrared LOAD] %s: %s raw=%u bits=%u value=0x%llX state_bytes=%u\n",path.c_str(),
+            signal.name.c_str(),unsigned(signal.raw),unsigned(signal.legacyBits),
+            static_cast<unsigned long long>(signal.legacyValue),unsigned(signal.legacyState.size()));
         loaded.push_back(std::move(signal));
     }
     _signals = std::move(loaded);

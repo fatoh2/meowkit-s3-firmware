@@ -10,6 +10,7 @@
 #include <SD_MMC.h>
 #include "../app_common/hp_ui.h"
 #include "infrared_signal.h"
+#include "infrared_power.h"
 #include "infrared_library_file.h"
 #include <atomic>
 
@@ -26,11 +27,11 @@ private:
         Main, Files, Remote, Learn, Result, Discard, Name, Edit, ButtonSelect,
         Move, Delete, Universal, Loading, Panel, Actions, Scan, SaveScan, Message
     };
-    enum class NameFor : uint8_t { Learn, Button, Remote, ScanRemote, ScanButton };
+    enum class NameFor : uint8_t { Learn, Power, Button, Remote, ScanRemote, ScanButton };
     enum class EditFor : uint8_t { Rename, Move, Delete };
     struct Input {
         bool up = false, down = false, left = false, right = false;
-        bool a = false, b = false, held = false;
+        bool a = false, b = false, held = false, rightEdge=false;
     } _input;
     meow_ir::DirectionRepeat _directionRepeat[4];
     struct Item { String title, subtitle; };
@@ -56,6 +57,10 @@ private:
     String _remotePath, _remoteName;
     meow_ir::Signal _learned;
     bool _learningNew = true, _easy = false;
+    bool _powerLearning=false,_powerHaveOn=false;
+    meow_ir::Signal _powerOn;
+    meow_ir::PowerPress _powerPress;
+    int _powerSignalIndex=-1;
     uint8_t _decodeMode = 0; // Auto, Decode only, RAW
     size_t _easyIndex = 0;
     Scene _learnOrigin = Scene::Main;
@@ -123,6 +128,10 @@ private:
     void _openFiles(bool library,bool saveDestination=false);
     void _refreshFiles();
     void _startLearn(bool newRemote);
+    void _startPowerLearn(bool newRemote);
+    void _keepPowerCapture();
+    void _runPower(meow_ir::Signal& signal);
+    void _finishPowerSend();
     void _receive();
     void _beginName(NameFor kind, const char* initial);
     void _commitName();

@@ -50,3 +50,26 @@ remotes continue to load. States and raw buffers are owned copies.
 COOLIX timing/repeats plus NEC, Sony and full-state Daikin transmission and
 decode roundtrips. `run_ir_save.sh` checks native/Momentum name collisions,
 scalar/state saved-file reload and malformed/truncated state rejection.
+
+## One Power button with learned On and Off commands
+
+Choose **Learn Power Toggle** from Infrared, or **+ Power Toggle** inside an
+existing saved remote. With the original remote Off, press its power button
+to capture On. Press Right to keep it. With the original remote On, press
+power to capture Off, then Right to name and save the paired button.
+The two captures may have the same protocol, but their command/state data
+must differ. Identical data is rejected and the Off capture can be retried.
+
+The saved button displays **Next: On** or **Next: Off**. A fresh A press
+sends that command once, including the protocol's required repeat frames;
+holding A does not alternate power. A successful transmission advances the
+next command and saves it through the existing transactional writer. A
+failed/cancelled transmission leaves it unchanged. Right changes and saves
+the next command without transmitting, for matching a device operated with
+another remote. IR is one-way: the next command is a local estimate, not a
+measurement of the appliance's state.
+
+Both complete payloads live in one normal remote record. `power_toggle`,
+`power_next` and `off_` fields retain the pairing and next command across
+reopening the app. Existing unpaired records continue to load. Truncated,
+nested and identical pairs are rejected before rewriting an existing file.

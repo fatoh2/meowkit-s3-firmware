@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <string>
 #include <vector>
+#include <memory>
 
 namespace meow_ir {
 constexpr size_t MaxTimings = 4096;
@@ -27,6 +28,8 @@ struct Signal {
     uint64_t legacyValue = 0;
     uint16_t legacyBits = 0;
     std::vector<uint8_t> legacyState;
+    std::shared_ptr<const Signal> powerOff;
+    bool powerNextOn=true;
 };
 
 inline bool unsignedNumber(const char* text, uint64_t& value, int base = 10) {
@@ -39,7 +42,16 @@ inline bool unsignedNumber(const char* text, uint64_t& value, int base = 10) {
     return true;
 }
 
+inline bool samePayload(const Signal& a,const Signal& b) {
+    if(a.raw!=b.raw) return false;
+    if(a.raw) return a.frequency==b.frequency && a.duty==b.duty && a.timings==b.timings;
+    return a.protocol==b.protocol && a.address==b.address && a.command==b.command &&
+        a.legacyProtocol==b.legacyProtocol && a.legacyValue==b.legacyValue &&
+        a.legacyBits==b.legacyBits && a.legacyState==b.legacyState;
+}
 inline bool validSignal(const Signal& signal) {
+    if(signal.powerOff && (signal.powerOff->powerOff ||
+        !validSignal(*signal.powerOff) || samePayload(signal,*signal.powerOff))) return false;
     if (signal.name.empty() || signal.name.size() > MaxName ||
         signal.name.find_first_of("\r\n") != std::string::npos) return false;
     if (signal.raw) {
@@ -72,10 +84,24 @@ struct RecordParser {
     bool nativeEncoding = false;
     bool hasValue = false, hasState = false;
     std::string protocolText;
+    bool hasPowerToggle=false,hasPowerNext=false,isPowerOff=false;
+    std::shared_ptr<RecordParser> offParser;
 
     void field(const std::string& key, const std::string& value) {
+        if(key.rfind("off_",0)==0) {
+            if(isPowerOff) { ok=false; return; }
+            if(!offParser) { offParser=std::make_shared<RecordParser>(); offParser->isPowerOff=true; }
+            offParser->field(key.substr(4),value);
+            signal.powerOff=std::make_shared<const Signal>(offParser->signal);
+            return;
+        }
         uint64_t number = 0;
-        if (key == "name") signal.name = value;
+        if (key=="power_toggle") {
+            ok &= !isPowerOff && !hasPowerToggle && value=="1"; hasPowerToggle=true;
+        } else if(key=="power_next") {
+            ok &= !isPowerOff && !hasPowerNext && (value=="on" || value=="off"); hasPowerNext=true;
+            signal.powerNextOn=value=="on";
+        } else if (key == "name") signal.name = value;
         else if (key == "type") {
             hasType = true;
             signal.raw = value == "raw";
@@ -152,13 +178,16 @@ struct RecordParser {
     }
 
     bool valid() const {
+        if(hasPowerToggle || hasPowerNext || offParser) {
+            if(!hasPowerToggle || !hasPowerNext || !offParser || !offParser->valid()) return false;
+        }
         if (!signal.raw && signal.protocol==InfraredProtocolUnknown && hasValue==hasState) return false;
         return ok && hasType && !(nativeEncoding && signal.raw) && (signal.raw ? hasFrequency && hasDuty && hasData :
             hasAddress && hasCommand) && validSignal(signal);
     }
 };
 
-inline std::string serialize(const Signal& signal) {
+inline std::string serializeSingle(const Signal& signal) {
     std::string out = "#\nname: " + signal.name + "\ntype: " + (signal.raw ? "raw\n" : "parsed\n");
     char buffer[128];
     if (signal.raw) {
@@ -192,6 +221,21 @@ inline std::string serialize(const Signal& signal) {
             for (auto byte:signal.legacyState) { snprintf(buffer,sizeof(buffer)," %02X",unsigned(byte)); out+=buffer; }
             out+='\n';
         }
+    }
+    return out;
+}
+
+inline std::string serialize(const Signal& signal) {
+    std::string out=serializeSingle(signal);
+    if(!signal.powerOff) return out;
+    out+="power_toggle: 1\npower_next: "; out+=signal.powerNextOn?"on\n":"off\n";
+    const auto alternate=serializeSingle(*signal.powerOff);
+    for(size_t begin=0;begin<alternate.size();) {
+        const auto end=alternate.find('\n',begin);
+        if(end==std::string::npos) break;
+        const auto line=alternate.substr(begin,end-begin);
+        if(!line.empty() && line[0]!='#') out+="off_"+line+"\n";
+        begin=end+1;
     }
     return out;
 }

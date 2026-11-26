@@ -1,5 +1,6 @@
 #include "../../src/app/app_09/infrared_saved_signal.h"
 #include "../../src/app/app_09/infrared_native_learn.h"
+#include "../../src/app/app_09/infrared_power.h"
 #include "../../src/system/sd_write_file.h"
 #include <cassert>
 #include <filesystem>
@@ -38,6 +39,31 @@ int main() {
     auto reloadedNative=parseNative(nativeNec);
     assert(reloadedNative.protocol==InfraredProtocolUnknown && reloadedNative.legacyProtocol=="NEC");
     assert(reloadedNative.legacyValue==0x20DF10EF && reloadedNative.legacyBits==32);
+    Signal on,off,power; on.name="On"; off.name="Off"; std::string powerError;
+    assert(learnNative(on,"COOLIX",24,0xB23F30) && learnNative(off,"COOLIX",24,0xB27BE0));
+    assert(makePowerPair(on,off,power,powerError)); power.name="Power";
+    assert(power.powerOff && power.powerNextOn && validSignal(power));
+    assert(!makePowerPair(on,on,reloadedNative,powerError));
+    auto loadedPower=parseNative(power);
+    assert(loadedPower.powerOff && loadedPower.legacyValue==0xB23F30 && loadedPower.powerOff->legacyValue==0xB27BE0);
+    PowerPress press;
+    assert(press.begin(loadedPower,false,false)==nullptr); // held key without fresh edge
+    assert(press.begin(loadedPower,true,false)==&loadedPower);
+    assert(press.begin(loadedPower,true,false)==nullptr); // pending frame cannot toggle again
+    assert(press.finish(loadedPower,true) && !loadedPower.powerNextOn);
+    loadedPower=parseNative(loadedPower); // reopening preserves next command
+    assert(!loadedPower.powerNextOn && loadedPower.powerOff);
+    assert(press.begin(loadedPower,true,false)==loadedPower.powerOff.get());
+    assert(!press.finish(loadedPower,false) && !loadedPower.powerNextOn); // failed TX never advances
+    assert(press.begin(loadedPower,true,false)==loadedPower.powerOff.get());
+    assert(press.finish(loadedPower,true) && loadedPower.powerNextOn);
+    assert(press.begin(loadedPower,true,true)==nullptr); // another TX owns worker
+    RecordParser incompletePair;
+    incompletePair.field("name","Broken"); incompletePair.field("type","raw");
+    incompletePair.field("frequency","38000"); incompletePair.field("duty_cycle","0.33"); incompletePair.field("data","9000 4500");
+    incompletePair.field("power_toggle","1"); incompletePair.field("power_next","on");
+    assert(!incompletePair.valid());
+    RecordParser nestedPair; nestedPair.field("off_off_name","Nested"); assert(!nestedPair.ok || !nestedPair.valid());
     for(const auto& name:{"SONY","RC5","SAMSUNG","LG","PANASONIC","MIDEA"}) {
         Signal native; native.name="Power";
         assert(learnNative(native,name,64,UINT64_MAX));
@@ -112,17 +138,24 @@ int main() {
     assert(saved.size()==2 && saved[0].name=="Power" && saved[1].name=="Volume Up");
     assert(saved[0].protocol==InfraredProtocolNEC && saved[0].command==0xa2 && saved[1].command==0x14);
     assert(file.open(directory,"AC.ir"));
-    const auto acBytes=header+serialize(reopenedAc)+serialize(nativeNec)+serialize(coolix);
+    const auto acBytes=header+serialize(reopenedAc)+serialize(nativeNec)+serialize(coolix)+serialize(loadedPower);
     assert(file.write(reinterpret_cast<const uint8_t*>(acBytes.data()),acBytes.size())==acBytes.size());
     assert(file.sync() && file.close());
     const auto acSaved=reload(file.path());
-    assert(acSaved.size()==3 && acSaved[0].legacyState==reopenedAc.legacyState);
+    assert(acSaved.size()==4 && acSaved[0].legacyState==reopenedAc.legacyState);
     assert(acSaved[1].legacyProtocol=="NEC" && acSaved[1].legacyValue==0x20DF10EF);
     assert(acSaved[2].legacyProtocol=="COOLIX" && acSaved[2].legacyValue==0xB27BE0);
+    assert(acSaved[3].powerOff && acSaved[3].powerNextOn && acSaved[3].powerOff->legacyValue==0xB27BE0);
     Signal raw; raw.name="Power"; raw.raw=true; raw.timings={9000,4500,560,1690};
     std::vector<Signal> rawSaved;
     assert(appendSavedButton({},raw,"Raw Power",rawSaved,error));
     assert(rawSaved[0].timings==raw.timings && rawSaved[0].frequency==raw.frequency);
+    Signal rawOff=raw; rawOff.timings[1]=4600;
+    assert(makePowerPair(raw,rawOff,power,powerError));
+    const auto rawPair=parseNative(power); assert(rawPair.raw && rawPair.powerOff->timings==rawOff.timings);
+    Signal acOff=reopenedAc; acOff.legacyState[0]^=1;
+    assert(makePowerPair(reopenedAc,acOff,power,powerError));
+    const auto acPair=parseNative(power); assert(acPair.powerOff->legacyState==acOff.legacyState);
     Signal invalid; invalid.name="Invalid";
     assert(!appendSavedButton({},invalid,"Invalid",combined,error));
     std::filesystem::remove_all(directory);

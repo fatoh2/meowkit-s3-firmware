@@ -73,14 +73,15 @@ void App09::_draw() {
         case Scene::Main: _drawList("Infrared", "Enter"); break;
         case Scene::Files: _drawList(_saveScanToExisting?"Add Signal To":_libraryBrowser ? "Library File" : "Saved Remotes"); break;
         case Scene::SaveScan: _drawList("Save Working Signal","Choose"); break;
-        case Scene::Remote: _drawList(clipped(_remoteName, 24).c_str(), _selected < int(_signals.size()) ? "Hold" : "Enter"); break;
+        case Scene::Remote: _drawList(clipped(_remoteName, 24).c_str(), _selected < int(_signals.size()) ?
+            (_signals[_selected].powerOff?"Send":"Hold") : "Enter"); break;
         case Scene::Edit: _drawList("Edit Remote", "Select"); break;
         case Scene::ButtonSelect: _drawList(_editFor == EditFor::Rename ? "Rename Button" : "Delete Button", "Select"); break;
         case Scene::Move: _drawList(_moveIndex < 0 ? "Move: Pick Button" : "Move: Up / Down", _moveIndex < 0 ? "Pick" : "Save"); break;
         case Scene::Universal: _drawList("Universal Remotes", "Enter"); break;
         case Scene::Actions: _drawList(clipped(_libraryTitle, 24).c_str(), "Scan"); break;
         case Scene::Name:
-            hp::drawHeader(lcd, _nameFor == NameFor::Learn ? "Name the Button" :
+            hp::drawHeader(lcd, _nameFor == NameFor::Power ? "Name Power Toggle" : _nameFor == NameFor::Learn ? "Name the Button" :
                 _nameFor == NameFor::Button ? "Rename Button" :
                 _nameFor == NameFor::ScanButton ? "Name the Button" :
                 _nameFor == NameFor::ScanRemote ? "Name New Remote" : "Rename Remote");
@@ -93,20 +94,21 @@ void App09::_draw() {
             hp::drawHourglassScreen(lcd, clipped(_libraryTitle).c_str(), millis() / 8);
             break;
         case Scene::Learn:
-            hp::drawHeader(lcd, "Learn Signal", "RX", hp::COL_WARN);
-            _drawFooter("L:Mode R:Decode", _easy ? "Skip" : "", "Back");
+            hp::drawHeader(lcd, _powerLearning?(_powerHaveOn?"Learn Power: OFF":"Learn Power: ON"):"Learn Signal", "RX", hp::COL_WARN);
+            _drawFooter(_powerLearning?"R:Decode":"L:Mode R:Decode", _easy ? "Skip" : "", "Back");
             lcd.setTextColor(hp::COL_FG, hp::COL_BG);
             lcd.setCursor(12, 40); lcd.print("Point remote at IR port");
-            lcd.setCursor(12, 62); lcd.print("and press a button");
+            lcd.setCursor(12, 62); lcd.print(_powerLearning?
+                (_powerHaveOn?"Remote ON: press power OFF":"Remote OFF: press power ON"):"and press a button");
             lcd.setTextColor(hp::COL_ACCENT, hp::COL_BG);
             lcd.setCursor(12, 80); lcd.print(_easy ? EasyNames[_easyIndex] : "Waiting for signal...");
             hp::drawScanWave(lcd, 72, millis() / 8);
-            hp::drawStat(lcd, 5, "Mode", _easy ? "Easy" : "Manual");
+            hp::drawStat(lcd, 5, "Mode", _powerLearning?"Paired Power":_easy ? "Easy" : "Manual");
             hp::drawStat(lcd, 6, "Decoding", decodeName(_decodeMode));
             break;
         case Scene::Result: {
-            hp::drawHeader(lcd, "Signal Received", _drawnTxBusy ? "TX" : "OK", hp::COL_WARN);
-            _drawFooter("L:Retry R:Save", "Send", "Back");
+            hp::drawHeader(lcd, _powerLearning?(_powerHaveOn?"OFF Received":"ON Received"):"Signal Received", _drawnTxBusy ? "TX" : "OK", hp::COL_WARN);
+            _drawFooter(_powerLearning?"L:Retry R:Next":"L:Retry R:Save", "Send", "Back");
             char text[64];
             hp::drawStat(lcd, 0, "Protocol", protocolName(_learned), hp::COL_FG);
             if (_learned.raw) {
@@ -124,7 +126,8 @@ void App09::_draw() {
                 snprintf(text, sizeof(text), "0x%08lX", static_cast<unsigned long>(_learned.address)); hp::drawStat(lcd, 1, "Address", text);
                 snprintf(text, sizeof(text), "0x%08lX", static_cast<unsigned long>(_learned.command)); hp::drawStat(lcd, 2, "Command", text);
             }
-            lcd.setCursor(12, 178); lcd.print("Hold A to repeat");
+            lcd.setCursor(12, 178); lcd.print(_powerLearning?
+                (_powerHaveOn?"R: Save both as one Power":"R: Keep ON, then learn OFF"):"Hold A to repeat");
             break;
         }
         case Scene::Discard:
