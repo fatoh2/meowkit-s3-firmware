@@ -31,6 +31,13 @@ bool recover() {
  if(selection.kind==meow_storage::PartitionKind::Reject){Serial.println("[SD RECOVERY] REFUSED invalid/unsupported partition geometry");return false;}
  if(fs->volbase!=selection.start && !switchVolume(fs,selection.index,selection.start))return false;
  Serial.printf("[SD PARTITION] selected=%u start=%lu sectors=%lu legacy=%u\n",selection.index,(unsigned long)selection.start,(unsigned long)selection.sectors,selection.legacy);
+ Serial.printf("[SD FAT] volbase=%lu fatbase=%lu fsize=%lu n_fats=%u\n",(unsigned long)fs->volbase,(unsigned long)fs->fatbase,(unsigned long)fs->fsize,unsigned(fs->n_fats));
+ for(unsigned fat=0;fat<fs->n_fats;++fat){
+  const uint64_t sector=uint64_t(fs->fatbase)+uint64_t(fat)*fs->fsize;
+  uint8_t head[512];
+  if(sector>=SD_MMC.cardSize()/512 || disk_read(drive,head,DWORD(sector),1)!=RES_OK){Serial.printf("[SD FAT] FAT%u read failed at sector=%llu\n",fat+1,(unsigned long long)sector);return false;}
+  Serial.printf("[SD FAT] FAT%u sector=%llu entries=%08lX,%08lX,%08lX\n",fat+1,(unsigned long long)sector,(unsigned long)meow_storage::sdLE32(head),(unsigned long)meow_storage::sdLE32(head+4),(unsigned long)meow_storage::sdLE32(head+8));
+ }
  if(!selection.legacy)return true;
  char identity[128];snprintf(identity,sizeof(identity),"MEOWKIT SD RECOVERY v1\npartition=%u start=%lu sectors=%lu\n",selection.index,(unsigned long)selection.start,(unsigned long)selection.sectors);
  const int complete=meow_storage::readRecoveryMarker(kRoot,kComplete,identity),pending=meow_storage::readRecoveryMarker(kRoot,kPending,identity);

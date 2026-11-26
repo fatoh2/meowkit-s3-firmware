@@ -810,6 +810,10 @@ void Launcher::handleNavigationEvent(mk_event_t evt)
         if (a) {
             if (usb_msc_is_active()) {
                 usb_manager_release(USB_MODE_MSC);
+                if(usb_msc_is_active()) {
+                    if(ui_usb_msc_label) lv_label_set_text(ui_usb_msc_label,"Transfer busy - retry eject");
+                    return;
+                }
                 if (ui_usb_msc_label) lv_label_set_text(ui_usb_msc_label, "Ejected - safe to unplug");
                 Serial.println("[Launcher] MSC ejected via A");
             } else {
@@ -819,6 +823,10 @@ void Launcher::handleNavigationEvent(mk_event_t evt)
         }
         if (b) {
             usb_manager_release(USB_MODE_MSC);
+            if(usb_msc_is_active()) {
+                if(ui_usb_msc_label) lv_label_set_text(ui_usb_msc_label,"Transfer busy - retry eject");
+                return;
+            }
             _ui_screen_change(&ui_settings, LV_SCR_LOAD_ANIM_FADE_ON, 300, 0, &ui_settings_screen_init);
             return;
         }
