@@ -6,7 +6,7 @@ trap 'rm -f "$temp_dir/mount" "$temp_dir/ir" "$temp_dir/fat" "$temp_dir/assets.S
 flags=(-std=c++17 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer)
 g++ "${flags[@]}" -Itools/tests/sd_fakes tools/tests/sd_mount.cpp src/bsp/sdmmc/SDMMC_Class.cpp -o "$temp_dir/mount"
 "$temp_dir/mount"
-g++ "${flags[@]}" tools/tests/fat_vfs_writer.cpp -Wl,--wrap=fdopen -o "$temp_dir/fat"
+g++ "${flags[@]}" tools/tests/fat_vfs_writer.cpp -Wl,--wrap=fdopen -Wl,--wrap=fsync -o "$temp_dir/fat"
 "$temp_dir/fat"
 python3 - "$temp_dir/assets.S" <<'PY'
 import importlib.util,sys
