@@ -1,5 +1,6 @@
 #include "infrared.h"
 #include <IRutils.h>
+#include "infrared_native_learn.h"
 
 namespace MOONCAKE::APPS {
 void App09::_updateLed() {
@@ -52,8 +53,15 @@ void App09::_receive() {
     }
     const auto* tail = infrared_check_decoder_ready(_decoder);
     if (!found && tail && !tail->repeat) { decoded = *tail; found = true; }
-    if (_decodeMode == 1 && !found) { _receiver->resume(); return; }
-    if (_decodeMode != 2 && found) {
+    static_assert(kStateSizeMax<=meow_ir::MaxNativeStateBytes,"Increase native state limit for this library");
+    const bool stateProtocol=hasACState(results.decode_type);
+    const size_t stateBytes=stateProtocol?(size_t(results.bits)+7)/8:0;
+    const bool nativeFound = _decodeMode != 2 && results.decode_type != UNKNOWN &&
+        results.decode_type != UNUSED && !results.repeat && stateBytes<=kStateSizeMax &&
+        meow_ir::learnNative(received,typeToString(results.decode_type).c_str(),results.bits,
+            stateProtocol?0:results.value,stateProtocol?results.state:nullptr,stateBytes);
+    if (_decodeMode == 1 && !found && !nativeFound) { _receiver->resume(); return; }
+    if (_decodeMode != 2 && found && !nativeFound) {
         received.raw = false;
         received.protocol = decoded.protocol;
         received.address = decoded.address;
@@ -95,7 +103,7 @@ void App09::_stopTx() {
 
 void App09::_runHeld(const meow_ir::Signal& signal) {
     if (!_txBusy && !_txSucceeded.exchange(true)) {
-        _message("Send Failed", "Unsupported legacy signal"); return;
+        _message("Send Failed", "Unsupported native signal"); return;
     }
     if (!_txTask && _input.a) { _message("TX Unavailable", "Cannot start infrared worker"); return; }
     if (_input.b) { _stopTx(); return; }
@@ -114,6 +122,9 @@ void App09::_txEntry(void* context) { static_cast<App09*>(context)->_txWorker();
 
 void App09::_txWorker() {
     auto* encoder = infrared_alloc_encoder();
+    // Keep toggle continuity across closing/reopening Infrared. Only this
+    // worker uses these states; repeats retain the current key-press bit.
+    static meow_ir::NativeToggleState rc5Toggle,rc6Toggle,rc6LongToggle;
     while (true) {
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
         if (_txShutdown.load()) break;
@@ -163,9 +174,27 @@ void App09::_txWorker() {
             }
             if (frames < minimum && !_txCancel.load()) ok = false;
         } else {
-            // Old MeowKit files with explicit value/bits retain their native sender.
+            // Native integer codes and multi-byte AC states retain their
+            // dedicated sender, including protocol-specific framing/repeats.
             const auto protocol = strToDecodeType(signal.legacyProtocol.c_str());
-            ok = protocol != UNKNOWN && _sender->send(protocol, signal.legacyValue, signal.legacyBits);
+            if (!signal.legacyState.empty()) {
+                uint8_t state[kStateSizeMax]{};
+                ok=protocol!=UNKNOWN && hasACState(protocol) && signal.legacyState.size()<=sizeof(state);
+                if(ok) {
+                    std::copy(signal.legacyState.begin(),signal.legacyState.end(),state);
+                    ok=_sender->send(protocol,state,uint16_t(signal.legacyState.size()));
+                }
+            } else {
+                uint64_t value=signal.legacyValue;
+                if(protocol==RC5 || protocol==RC5X)
+                    value=rc5Toggle.apply(value,_sender->toggleRC5(0),_txRepeat);
+                else if(protocol==RC6) {
+                    auto& toggle=signal.legacyBits==kRC6_36Bits?rc6LongToggle:rc6Toggle;
+                    value=toggle.apply(value,_sender->toggleRC6(0,signal.legacyBits),_txRepeat);
+                }
+                ok=protocol!=UNKNOWN && !hasACState(protocol) &&
+                    _sender->send(protocol,value,signal.legacyBits);
+            }
         }
         _sender->space(0);
         Serial.printf("[Infrared TX] complete: ok=%u cancelled=%u\n",

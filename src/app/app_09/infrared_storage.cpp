@@ -152,6 +152,7 @@ bool App09::_writeRemote(const String& path, const std::vector<meow_ir::Signal>&
         return false;
     }
     if (existed) SD_MMC.remove(backup);
+    Serial.printf("[Infrared] Saved %u button(s) to %s\n",unsigned(signals.size()),path.c_str());
     return true;
 }
 

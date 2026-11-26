@@ -13,6 +13,7 @@ namespace meow_ir {
 constexpr size_t MaxTimings = 4096;
 constexpr size_t MaxButtons = 256;
 constexpr size_t MaxName = 23;
+constexpr size_t MaxNativeStateBytes = 128;
 
 struct Signal {
     std::string name;
@@ -25,6 +26,7 @@ struct Signal {
     std::string legacyProtocol;
     uint64_t legacyValue = 0;
     uint16_t legacyBits = 0;
+    std::vector<uint8_t> legacyState;
 };
 
 inline bool unsignedNumber(const char* text, uint64_t& value, int base = 10) {
@@ -47,8 +49,13 @@ inline bool validSignal(const Signal& signal) {
         for (auto timing : signal.timings) if (!timing || timing > 10000000) return false;
         return true;
     }
-    if (signal.protocol == InfraredProtocolUnknown)
-        return !signal.legacyProtocol.empty() && signal.legacyBits > 0 && signal.legacyBits <= 64;
+    if (signal.protocol == InfraredProtocolUnknown) {
+        if (signal.legacyProtocol.empty() || signal.legacyProtocol.size()>64 ||
+            signal.legacyProtocol.find_first_of("\r\n")!=std::string::npos || !signal.legacyBits) return false;
+        return signal.legacyState.empty() ? signal.legacyBits<=64 :
+            signal.legacyState.size()<=MaxNativeStateBytes &&
+            signal.legacyState.size()==(size_t(signal.legacyBits)+7)/8;
+    }
     if (!infrared_is_protocol_valid(signal.protocol)) return false;
     const auto a = infrared_get_protocol_address_length(signal.protocol);
     const auto c = infrared_get_protocol_command_length(signal.protocol);
@@ -62,6 +69,9 @@ struct RecordParser {
     Signal signal;
     bool ok = true, hasType = false, hasAddress = false, hasCommand = false;
     bool hasFrequency = false, hasDuty = false, hasData = false;
+    bool nativeEncoding = false;
+    bool hasValue = false, hasState = false;
+    std::string protocolText;
 
     void field(const std::string& key, const std::string& value) {
         uint64_t number = 0;
@@ -70,8 +80,13 @@ struct RecordParser {
             hasType = true;
             signal.raw = value == "raw";
             ok &= signal.raw || value == "parsed";
+        } else if (key == "encoding") {
+            nativeEncoding = value == "native";
+            ok &= nativeEncoding;
+            if (nativeEncoding) { signal.protocol=InfraredProtocolUnknown; signal.legacyProtocol=protocolText; }
         } else if (key == "protocol") {
-            signal.protocol = infrared_get_protocol_by_name(value.c_str());
+            protocolText=value;
+            signal.protocol = nativeEncoding?InfraredProtocolUnknown:infrared_get_protocol_by_name(value.c_str());
             if (signal.protocol == InfraredProtocolUnknown) signal.legacyProtocol = value;
         } else if (key == "address") {
             hasAddress = true;
@@ -107,18 +122,38 @@ struct RecordParser {
                 signal.timings.push_back(static_cast<uint32_t>(duration));
                 p = end;
             }
+        } else if (key == "state") {
+            ok &= !hasState; hasState=true;
+            const char* p=value.c_str();
+            while (*p && ok) {
+                while (*p==' ' || *p=='\t') ++p;
+                if (!*p) break;
+                const auto hex=[](char c)->int {
+                    if(c>='0'&&c<='9') return c-'0';
+                    if(c>='A'&&c<='F') return c-'A'+10;
+                    if(c>='a'&&c<='f') return c-'a'+10;
+                    return -1;
+                };
+                const int high=hex(p[0]),low=p[1]?hex(p[1]):-1;
+                if(high<0 || low<0 || (p[2] && p[2]!=' ' && p[2]!='\t') ||
+                    signal.legacyState.size()>=MaxNativeStateBytes) { ok=false; break; }
+                signal.legacyState.push_back(uint8_t((high<<4)|low)); p+=2;
+            }
+            ok &= !signal.legacyState.empty();
         } else if (key == "value") {
+            ok &= !hasValue; hasValue=true;
             if (unsignedNumber(value.c_str(), number, 0)) signal.legacyValue = number;
             else ok = false;
         } else if (key == "bits") {
-            if (unsignedNumber(value.c_str(), number) && number <= 64)
+            if (unsignedNumber(value.c_str(), number) && number <= MaxNativeStateBytes*8)
                 signal.legacyBits = static_cast<uint16_t>(number);
             else ok = false;
         }
     }
 
     bool valid() const {
-        return ok && hasType && (signal.raw ? hasFrequency && hasDuty && hasData :
+        if (!signal.raw && signal.protocol==InfraredProtocolUnknown && hasValue==hasState) return false;
+        return ok && hasType && !(nativeEncoding && signal.raw) && (signal.raw ? hasFrequency && hasDuty && hasData :
             hasAddress && hasCommand) && validSignal(signal);
     }
 };
@@ -136,6 +171,7 @@ inline std::string serialize(const Signal& signal) {
         }
         return out + "\n";
     }
+    if (signal.protocol==InfraredProtocolUnknown) out += "encoding: native\n";
     out += "protocol: ";
     out += signal.protocol == InfraredProtocolUnknown ? signal.legacyProtocol :
         infrared_get_protocol_name(signal.protocol);
@@ -148,9 +184,14 @@ inline std::string serialize(const Signal& signal) {
         out += buffer;
     }
     if (signal.protocol == InfraredProtocolUnknown) {
-        snprintf(buffer, sizeof(buffer), "value: 0x%llX\nbits: %u\n",
-                 static_cast<unsigned long long>(signal.legacyValue), unsigned(signal.legacyBits));
-        out += buffer;
+        snprintf(buffer,sizeof(buffer),"bits: %u\n",unsigned(signal.legacyBits)); out+=buffer;
+        if (signal.legacyState.empty()) {
+            snprintf(buffer,sizeof(buffer),"value: 0x%llX\n",static_cast<unsigned long long>(signal.legacyValue)); out+=buffer;
+        } else {
+            out+="state:";
+            for (auto byte:signal.legacyState) { snprintf(buffer,sizeof(buffer)," %02X",unsigned(byte)); out+=buffer; }
+            out+='\n';
+        }
     }
     return out;
 }

@@ -113,6 +113,13 @@ void App09::_draw() {
                 snprintf(text, sizeof(text), "%u", unsigned(_learned.timings.size())); hp::drawStat(lcd, 1, "Samples", text);
                 snprintf(text, sizeof(text), "%lu Hz", static_cast<unsigned long>(_learned.frequency)); hp::drawStat(lcd, 2, "Carrier", text);
                 snprintf(text, sizeof(text), "%.0f%%", double(_learned.duty * 100)); hp::drawStat(lcd, 3, "Duty", text);
+            } else if (!_learned.legacyProtocol.empty()) {
+                if(_learned.legacyState.empty()) {
+                    snprintf(text,sizeof(text),"0x%llX",static_cast<unsigned long long>(_learned.legacyValue)); hp::drawStat(lcd,1,"Code",text);
+                } else {
+                    snprintf(text,sizeof(text),"%u bytes",unsigned(_learned.legacyState.size())); hp::drawStat(lcd,1,"State",text);
+                }
+                snprintf(text,sizeof(text),"%u",unsigned(_learned.legacyBits)); hp::drawStat(lcd,2,"Bits",text);
             } else {
                 snprintf(text, sizeof(text), "0x%08lX", static_cast<unsigned long>(_learned.address)); hp::drawStat(lcd, 1, "Address", text);
                 snprintf(text, sizeof(text), "0x%08lX", static_cast<unsigned long>(_learned.command)); hp::drawStat(lcd, 2, "Command", text);
