@@ -9,6 +9,9 @@
 #include <string.h>
 #include "../bsp/sdmmc/SDMMC_Class.hpp"
 #include "../system/usb_msc.h"
+#include "../system/sd_partition_mount.h"
+
+extern "C" int ui_sd_recovery_blocked(void) { return sdPartitionBlocked()?1:0; }
 
 extern "C" int ui_sd_present(void)
 {

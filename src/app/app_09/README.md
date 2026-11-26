@@ -73,3 +73,19 @@ Both complete payloads live in one normal remote record. `power_toggle`,
 `power_next` and `off_` fields retain the pairing and next command across
 reopening the app. Existing unpaired records continue to load. Truncated,
 nested and identical pairs are rejected before rewriting an existing file.
+
+## Transmitter and SD integrity
+
+MeowKit IR now uses LEDC hardware carrier modulation on dedicated channel 0
+(timer 0). Native protocol encoders, Momentum encoders and RAW replay share
+the same PWM sender; the transmit task runs above display work on the Arduino
+core. Carrier setup failures are reported as transmission failures and do
+not advance a paired Power button. `run_ir_sender.sh` checks the native
+On/Off/On envelopes, frequency conversion, channel isolation and cleanup.
+
+SD mounting prefers the validated MBR FAT partition and supports genuine
+superfloppies. A conflicting old sector-zero filesystem triggers read-only
+inventory and CRC backup export. Normal filesystem writes stay disabled
+until a host verifies the backup, restores the canonical partition and writes
+the matching complete marker. Settings' USB icon remains available for raw
+recovery access. Firmware never formats or rewrites the boot sectors.

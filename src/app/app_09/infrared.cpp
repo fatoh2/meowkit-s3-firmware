@@ -21,13 +21,13 @@ void App09::onOpen() {
     _powerLearning=_powerHaveOn=false; _powerOn={}; _powerPress={}; _powerSignalIndex=-1;
     _ledActive = _ledOn = false;
     _device->led.off();
-    _sender = new IRsend(HAL_PIN_IR_TX);
+    _sender = new meow_ir::PwmIRsend(HAL_PIN_IR_TX);
     _sender->begin();
     _receiver = new IRrecv(HAL_PIN_IR_RX, meow_ir::MaxTimings + 1, 150, true);
     _decoder = infrared_alloc_decoder();
     _txShutdown.store(false); _txCancel.store(false); _txBusy.store(false);
     _txSucceeded.store(true); _txStopped.store(false);
-    if (xTaskCreate(_txEntry, "MeowIR-TX", 4096, this, 1, &_txTask) != pdPASS) {
+    if (xTaskCreatePinnedToCore(_txEntry, "MeowIR-TX", 4096, this, 3, &_txTask, ARDUINO_RUNNING_CORE) != pdPASS) {
         _txTask = nullptr; _txStopped.store(true);
     }
     _storageReady();

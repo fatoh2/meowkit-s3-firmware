@@ -129,6 +129,7 @@ void App09::_txWorker() {
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
         if (_txShutdown.load()) break;
         const auto& signal = _txSignal;
+        _sender->resetFrameStatus();
         Serial.printf("[Infrared TX] name=%s raw=%u timings=%u repeat=%u\n",
             signal.name.c_str(),unsigned(signal.raw),unsigned(signal.timings.size()),unsigned(_txRepeat));
         if(!signal.raw) Serial.printf("[Infrared TX] protocol=%s bits=%u value=0x%llX state_bytes=%u\n",
@@ -200,6 +201,9 @@ void App09::_txWorker() {
             }
         }
         _sender->space(0);
+        ok=ok && _sender->carrierReady();
+        Serial.printf("[Infrared TX] hardware carrier=%.1f Hz ready=%u\n",
+            _sender->carrierFrequency(),unsigned(_sender->carrierReady()));
         Serial.printf("[Infrared TX] complete: ok=%u cancelled=%u\n",
             unsigned(ok),unsigned(_txCancel.load()));
         _txSucceeded.store(ok);

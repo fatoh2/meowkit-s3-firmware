@@ -7,6 +7,7 @@
 #include "../../bsp/devices.h"
 #include <IRrecv.h>
 #include <IRsend.h>
+#include "infrared_sender.h"
 #include <SD_MMC.h>
 #include "../app_common/hp_ui.h"
 #include "infrared_signal.h"
@@ -91,7 +92,7 @@ private:
     String _messageTitle, _messageDetail, _lastError;
     uint32_t _messageUntil = 0;
     IRrecv* _receiver = nullptr;
-    IRsend* _sender = nullptr;
+    meow_ir::PwmIRsend* _sender = nullptr;
     InfraredDecoderHandler* _decoder = nullptr;
     bool _rxEnabled = false;
     TaskHandle_t _txTask = nullptr;

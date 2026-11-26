@@ -10,6 +10,7 @@
 #include "../config.h"
 #include <Arduino.h>
 #include "../../system/usb_msc.h"
+#include "../../system/sd_partition_mount.h"
 
 /* Frequency ladder — descending, most compatible last */
 static constexpr uint32_t kFreqTable[] = { 10000, 5000, 1000 };
@@ -20,6 +21,9 @@ static constexpr int       kFreqCount  = (int)(sizeof(kFreqTable) / sizeof(kFreq
 bool SDMMC_Class::begin(bool mode4bit)
 {
     if (usb_msc_is_active()) return false; // PC owns raw SD sectors exclusively
+#ifdef ARDUINO
+    if (sdPartitionBlocked()) return false;
+#endif
     // cardType() is cached by Arduino, so probe the existing mount before
     // trusting it. Adopt healthy mounts without interrupting open app files.
     if (SD_MMC.cardType()!=CARD_NONE) {
@@ -42,6 +46,9 @@ bool SDMMC_Class::begin(bool mode4bit)
                           mode4bit ? "4-bit" : "1-bit");
             return true;
         }
+#ifdef ARDUINO
+        if (sdPartitionBlocked()) return false;
+#endif
         /* Brief settle before next attempt */
         delay(20);
     }
@@ -70,6 +77,9 @@ uint64_t SDMMC_Class::freeBytes()  const { return _mounted ? (totalBytes() - use
 bool SDMMC_Class::isPresent()
 {
     if (usb_msc_is_active()) return false;
+#ifdef ARDUINO
+    if (sdPartitionBlocked()) return false;
+#endif
     if (SD_MMC.cardType()==CARD_NONE) { _mounted=false; return false; }
     File f = SD_MMC.open("/");
     bool ok = f && f.isDirectory();
@@ -101,7 +111,19 @@ const char* SDMMC_Class::cardTypeStr() const
 bool SDMMC_Class::_tryMount(uint32_t freq_khz, bool mode4bit)
 {
     /* Arduino passes this value directly to host.max_freq_khz. Never format. */
+#ifdef ARDUINO
+    // Force the first MBR partition before FatFs can mistake an old sector-0
+    // BPB for the active volume. Auto remains the superfloppy fallback.
+    sdPartitionSelectInitial(true);
+#endif
     bool ok = SD_MMC.begin("/sdcard", !mode4bit, false, freq_khz);
+#ifdef ARDUINO
+    if (!ok) {
+        sdPartitionSelectInitial(false);
+        ok=SD_MMC.begin("/sdcard", !mode4bit, false, freq_khz);
+    }
+    if (ok && !sdPartitionRecoverMounted()) { SD_MMC.end(); return false; }
+#endif
     if (!ok) return false;
 
     uint8_t ct = SD_MMC.cardType();

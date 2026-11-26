@@ -36,6 +36,7 @@ extern "C" {
 }
 
 #include "../bsp/config.h"
+#include "../bsp/sdmmc/SDMMC_Class.hpp"
 
 /* File-scope global: constructor calls tinyusb_enable_interface() at static-init
  * time, before USB.begin() — so MSC is included in the composite descriptor. */
@@ -115,6 +116,12 @@ int usb_msc_enable(void)
         sdmmc_host_deinit();
         goto fail_remount;
     }
+    if (!s_card->csd.capacity || s_card->csd.sector_size!=512) {
+        Serial.println("[MSC] invalid raw card geometry");
+        free(s_card); s_card=nullptr;
+        sdmmc_host_deinit();
+        goto fail_remount;
+    }
 
     /* 3. Wire callbacks, set LUN geometry, expose media to host.
      *    USB is already a CDC+MSC composite — host polls test_unit_ready
@@ -142,7 +149,7 @@ int usb_msc_enable(void)
 
 fail_remount:
     SD_MMC.setPins(HAL_PIN_SD_CLK, HAL_PIN_SD_CMD, HAL_PIN_SD_D0);
-    SD_MMC.begin("/sdcard", true, false, 10000);
+    sdmmcEnsureReady();
     return 0;
 }
 
@@ -164,7 +171,7 @@ void usb_msc_disable(void)
 
     /* Remount FAT-FS for the rest of the firmware */
     SD_MMC.setPins(HAL_PIN_SD_CLK, HAL_PIN_SD_CMD, HAL_PIN_SD_D0);
-    if (!SD_MMC.begin("/sdcard", true, false, 10000)) {
+    if (!sdmmcEnsureReady()) {
         Serial.println("[MSC] FS remount failed");
     } else {
         Serial.println("[MSC] FS remounted");
