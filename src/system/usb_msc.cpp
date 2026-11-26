@@ -29,7 +29,7 @@ static constexpr size_t kScratchSize=4096;
 static constexpr TickType_t kLifecycleWait=pdMS_TO_TICKS(5000);
 struct IoStats {
  uint32_t reads=0,writes=0,errors=0,ejects=0;
- uint32_t lba=0,offset=0,size=0;uint64_t failedSector=0;
+ uint32_t lba=0,offset=0,size=0,lastLba=0,lastOffset=0,lastSize=0,maxMicros=0;uint64_t failedSector=0;
  int error=0,driverError=0;bool writing=false;
 };
 static IoStats s_stats;
@@ -46,9 +46,11 @@ static int32_t transfer(bool writing,uint32_t lba,uint32_t offset,uint8_t* buffe
  const auto mutex=ioMutex();if(!mutex || xSemaphoreTake(mutex,kLifecycleWait)!=pdTRUE)return -1;
  if(!s_acceptIO.load() || !s_card || !s_scratch){xSemaphoreGive(mutex);return -1;}
  if(writing)++s_stats.writes;else ++s_stats.reads;
+ s_stats.lastLba=lba;s_stats.lastOffset=offset;s_stats.lastSize=size;const uint32_t started=micros();
  const auto result=meow_storage::mscTransfer(writing,lba,offset,buffer,size,s_card->csd.capacity,s_scratch,kScratchSize,
   [](uint8_t* out,uint64_t sector,size_t count){return int(sdmmc_read_sectors(s_card,out,size_t(sector),count));},
   [](const uint8_t* in,uint64_t sector,size_t count){return int(sdmmc_write_sectors(s_card,in,size_t(sector),count));});
+ const uint32_t elapsed=micros()-started;if(elapsed>s_stats.maxMicros)s_stats.maxMicros=elapsed;
  if(result.bytes<0){++s_stats.errors;s_stats.lba=lba;s_stats.offset=offset;s_stats.size=size;s_stats.failedSector=result.sector;s_stats.error=int(result.error);s_stats.driverError=result.ioError;s_stats.writing=writing;}
  else s_bytes.fetch_add(static_cast<unsigned long>(result.bytes));
  xSemaphoreGive(mutex);return result.bytes;
@@ -127,10 +129,11 @@ int usb_msc_is_active(void){return s_running.load();}
 unsigned long usb_msc_bytes_transferred(void) {
  // Called by the UI/main task. Snapshot under the IO lock, then print outside
  // it so CDC logging can never prevent a TinyUSB callback from finishing.
- static uint32_t loggedErrors=0,loggedEjects=0;IoStats stats;bool snapshot=false;
+ static uint32_t loggedErrors=0,loggedEjects=0,loggedReads=0,loggedWrites=0;IoStats stats;bool snapshot=false;
  const auto mutex=ioMutex();if(mutex && xSemaphoreTake(mutex,0)==pdTRUE){stats=s_stats;snapshot=true;xSemaphoreGive(mutex);}
- if(snapshot && (stats.errors!=loggedErrors || stats.ejects!=loggedEjects)){
-  loggedErrors=stats.errors;loggedEjects=stats.ejects;
+ if(snapshot && (stats.errors!=loggedErrors || stats.ejects!=loggedEjects || uint32_t(stats.reads-loggedReads)>=256 || uint32_t(stats.writes-loggedWrites)>=256)){
+  loggedErrors=stats.errors;loggedEjects=stats.ejects;loggedReads=stats.reads;loggedWrites=stats.writes;
+  Serial.printf("[MSC RATE] bytes=%lu last_lba=%lu offset=%lu size=%lu max_callback_us=%lu\n",s_bytes.load(),(unsigned long)stats.lastLba,(unsigned long)stats.lastOffset,(unsigned long)stats.lastSize,(unsigned long)stats.maxMicros);
   Serial.printf("[MSC IO] reads=%lu writes=%lu errors=%lu ejects=%lu last=%s lba=%lu offset=%lu size=%lu sector=%llu error=%d sdk=%d\n",(unsigned long)stats.reads,(unsigned long)stats.writes,(unsigned long)stats.errors,(unsigned long)stats.ejects,stats.writing?"write":"read",(unsigned long)stats.lba,(unsigned long)stats.offset,(unsigned long)stats.size,(unsigned long long)stats.failedSector,stats.error,stats.driverError);
  }
  return s_bytes.load();

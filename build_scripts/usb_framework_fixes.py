@@ -55,12 +55,26 @@ def patch_hid(source, project_root=None):
     return source.replace("portMAX_DELAY", "0 /* HID USB callbacks never block on application events */")
 
 
+def patch_msc(source):
+    # A negative SCSI result must stay negative. The pinned core stores -1 in
+    # uint16_t, then clamps it to a positive payload length and reports success.
+    old = "    uint16_t resplen = 0;"
+    assert source.count(old) == 1, "Unsupported USBMSC SCSI response implementation"
+    source = source.replace(old, "    int32_t resplen = 0;")
+    old = "        case SCSI_CMD_PREVENT_ALLOW_MEDIUM_REMOVAL:"
+    assert source.count(old) == 1, "Unsupported USBMSC SCSI command implementation"
+    source = source.replace(old, """        case 0x35: // SYNCHRONIZE CACHE(10): raw writes complete synchronously.
+        case SCSI_CMD_PREVENT_ALLOW_MEDIUM_REMOVAL:""")
+    return source
+
+
 def install(env):
     sdk = Path(env.PioPlatform().get_package_dir("framework-arduinoespressif32"))
     outputs = Path(env.subst("$BUILD_DIR")) / "usb-framework-fixes"
     outputs.mkdir(parents=True, exist_ok=True)
     sources = {
         sdk / "cores/esp32/USBCDC.cpp": patch_cdc,
+        sdk / "cores/esp32/USBMSC.cpp": patch_msc,
         sdk / "libraries/USB/src/USBHIDKeyboard.cpp": lambda s: s.replace(
             "portMAX_DELAY", "0 /* LED events must not stall the USB control endpoint */"),
         sdk / "libraries/USB/src/USBHID.cpp": lambda s: patch_hid(s, env.subst("$PROJECT_DIR")),
