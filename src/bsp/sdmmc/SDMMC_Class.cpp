@@ -11,6 +11,13 @@
 #include <Arduino.h>
 #include "../../system/usb_msc.h"
 #include "../../system/sd_partition_mount.h"
+#ifdef ARDUINO
+#include "../../system/sd_clock.h"
+#include "driver/sdmmc_host.h"
+#include "esp_heap_caps.h"
+#include "ff.h"
+#include "diskio.h"
+#endif
 
 /* Frequency ladder — descending, most compatible last */
 static constexpr uint32_t kFreqTable[] = { 10000, 5000, 1000 };
@@ -122,7 +129,20 @@ bool SDMMC_Class::_tryMount(uint32_t freq_khz, bool mode4bit)
         sdPartitionSelectInitial(false);
         ok=SD_MMC.begin("/sdcard", !mode4bit, false, freq_khz);
     }
-    if (ok && !sdPartitionRecoverMounted()) { SD_MMC.end(); return false; }
+    if (ok) {
+        auto* dma=static_cast<uint8_t*>(heap_caps_malloc(512,MALLOC_CAP_INTERNAL|MALLOC_CAP_DMA));
+        uint8_t baseline[512];
+        bool verified=dma && disk_read(VolToPart[0].pd,dma,0,1)==RES_OK;
+        if(verified) {
+            memcpy(baseline,dma,sizeof(baseline));
+            verified=meow_storage::verifySDClock(freq_khz,dma,baseline,
+                [](uint8_t* data){return int(disk_read(VolToPart[0].pd,data,0,1));},
+                [](uint32_t clock){return int(sdmmc_host_set_card_clk(SDMMC_HOST_SLOT_1,clock));});
+        }
+        free(dma);
+        if(!verified){Serial.printf("[SDMMC] Clock/read verification failed at %u kHz\n",freq_khz);SD_MMC.end();return false;}
+        if(!sdPartitionRecoverMounted()){SD_MMC.end();return false;}
+    }
 #endif
     if (!ok) return false;
 

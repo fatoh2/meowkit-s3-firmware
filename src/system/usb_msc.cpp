@@ -1,12 +1,14 @@
 /** Raw SD USB MSC. Filesystem mounts stay closed while the host owns media. */
 #include "usb_msc.h"
 #include "usb_msc_transfer.h"
+#include "sd_clock.h"
 #include <Arduino.h>
 #include <SD_MMC.h>
 #include <USB.h>
 #include <USBMSC.h>
 #include <atomic>
 #include <cstdlib>
+#include <initializer_list>
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 extern "C" {
@@ -85,7 +87,7 @@ int usb_msc_enable(void) {
  host.slot=SDMMC_HOST_SLOT_1;host.flags=SDMMC_HOST_FLAG_1BIT;
  sdmmc_slot_config_t slot=SDMMC_SLOT_CONFIG_DEFAULT();
  slot.clk=(gpio_num_t)HAL_PIN_SD_CLK;slot.cmd=(gpio_num_t)HAL_PIN_SD_CMD;slot.d0=(gpio_num_t)HAL_PIN_SD_D0;slot.width=1;slot.flags=0;
- bool ok=false;int error=0;const char* stage="host init";
+ bool ok=false;int error=0;uint32_t selectedClock=0;const char* stage="host init";
  do {
   error=sdmmc_host_init();if(error!=ESP_OK)break;s_hostInitialized=true;
   stage="slot init";error=sdmmc_host_init_slot(SDMMC_HOST_SLOT_1,&slot);if(error!=ESP_OK)break;
@@ -95,6 +97,17 @@ int usb_msc_enable(void) {
   if(!s_card || !s_scratch){error=-1;break;}
   memset(s_card,0,sizeof(*s_card));
   stage="card init";error=sdmmc_card_init(&host,s_card);if(error!=ESP_OK)break;
+  stage="clock baseline";error=sdmmc_read_sectors(s_card,s_scratch,0,1);if(error!=ESP_OK)break;
+  uint8_t baseline[512];memcpy(baseline,s_scratch,sizeof(baseline));
+  stage="clock verification";
+  for(uint32_t frequency:{10000u,5000u,1000u}) {
+   if(meow_storage::verifySDClock(frequency,s_scratch,baseline,
+      [](uint8_t* data){return int(sdmmc_read_sectors(s_card,data,0,1));},
+      [](uint32_t clock){return int(sdmmc_host_set_card_clk(SDMMC_HOST_SLOT_1,clock));})) {
+    selectedClock=frequency;break;
+   }
+  }
+  if(!selectedClock){error=-1;break;}
   stage="card geometry";if(!s_card->csd.capacity || s_card->csd.sector_size!=512){error=-1;break;}
   // SDK end() clears callback pointers without synchronizing its check/call.
   // Keep pointers installed permanently, and guard readiness/resources here.
@@ -111,7 +124,7 @@ int usb_msc_enable(void) {
   if(releaseRaw()){s_running.store(0);remountFilesystem();}
  }
  xSemaphoreGive(mutex);
- if(ok)Serial.printf("[MSC] enabled — %lu sectors x 512 B, 10000 kHz, DMA scratch=%u\n",(unsigned long)sectors,unsigned(kScratchSize));
+ if(ok)Serial.printf("[MSC] enabled — %lu sectors x 512 B, verified clock=%lu kHz, DMA scratch=%u\n",(unsigned long)sectors,(unsigned long)selectedClock,unsigned(kScratchSize));
  return ok?1:0;
 }
 void usb_msc_disable(void) {

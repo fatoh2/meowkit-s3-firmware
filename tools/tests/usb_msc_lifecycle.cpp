@@ -14,8 +14,9 @@ extern "C" {
 #include <cassert>
 extern "C" esp_err_t sdmmc_host_init(){msc_fake::host=true;return 0;}
 extern "C" esp_err_t sdmmc_host_init_slot(int,const sdmmc_slot_config_t*){return 0;}
+extern "C" esp_err_t sdmmc_host_set_card_clk(int slot,uint32_t frequency){assert(slot==1);if(msc_fake::failClock || frequency>msc_fake::maximumClock)return 7;msc_fake::clock=frequency;return 0;}
 extern "C" esp_err_t sdmmc_host_deinit(){assert(!msc_fake::activeReads);msc_fake::host=false;++msc_fake::deinits;return 0;}
-extern "C" esp_err_t sdmmc_card_init(const sdmmc_host_t* host,sdmmc_card_t* card){msc_fake::clock=host->max_freq_khz;card->csd.capacity=16000000;card->csd.sector_size=512;return msc_fake::failInit?7:0;}
+extern "C" esp_err_t sdmmc_card_init(const sdmmc_host_t* host,sdmmc_card_t* card){assert(host->max_freq_khz==10000);msc_fake::clock=400;card->csd.capacity=16000000;card->csd.sector_size=512;return msc_fake::failInit?7:0;}
 extern "C" esp_err_t sdmmc_read_sectors(sdmmc_card_t* card,void* out,size_t,size_t count){
  assert(msc_fake::host && card && count && count<=8 && uintptr_t(out)%4==0);++msc_fake::activeReads;
  {std::unique_lock<std::mutex> lock(msc_fake::barrierMutex);if(msc_fake::blockRead){msc_fake::readEntered=true;msc_fake::barrier.notify_all();msc_fake::barrier.wait(lock,[]{return msc_fake::releaseRead;});}}
@@ -36,5 +37,8 @@ int main(){
  assert(msc->read && msc->read(16,0,packet.data(),64)==-1);assert(msc_fake::callbackLogs==0 && msc_fake::ends==0);
  msc_fake::blockRead=false;msc_fake::failBegin=true;assert(!usb_msc_enable());assert(!msc_fake::present && !msc_fake::host && !usb_msc_is_active());
  msc_fake::failBegin=false;msc_fake::failInit=true;assert(!usb_msc_enable());assert(!msc_fake::present && !msc_fake::host && !usb_msc_is_active());
- puts("USB MSC lifecycle checks passed");
+ msc_fake::failInit=false;msc_fake::failClock=true;assert(!usb_msc_enable());assert(!msc_fake::present && !msc_fake::host && !usb_msc_is_active());
+ msc_fake::failClock=false;msc_fake::maximumClock=5000;assert(usb_msc_enable() && msc_fake::clock==5000);usb_msc_disable();
+ msc_fake::maximumClock=1000;assert(usb_msc_enable() && msc_fake::clock==1000);usb_msc_disable();
+ puts("USB MSC lifecycle checks passed (explicit clock selection, fallback, failure gating)");
 }
