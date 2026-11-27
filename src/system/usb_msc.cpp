@@ -6,7 +6,6 @@
 #include <SD_MMC.h>
 #include <USB.h>
 #include <USBMSC.h>
-#include <tusb.h>
 #include <atomic>
 #include <cstdlib>
 #include <initializer_list>
@@ -97,14 +96,8 @@ int usb_msc_enable(void) {
  const auto mutex=ioMutex();if(!mutex || xSemaphoreTake(mutex,kLifecycleWait)!=pdTRUE)return 0;
  if(s_running.load()){const bool ready=s_acceptIO.load();xSemaphoreGive(mutex);return ready?1:0;}
  s_running.store(1);s_prepared.store(false);s_acceptIO.store(false);s_msc.mediaPresent(false);s_bytes.store(0);s_stats={};
- // Windows retains an ejected removable LUN until it observes reinsertion.
- // Re-enumerate from the main task with valid media/geometry already prepared
- // on reconnect; never change the PHY from a USB callback.
- if(!tud_disconnect()){
-  s_running.store(0);xSemaphoreGive(mutex);
-  Serial.println("[MSC] USB detach failed; filesystem retained");return 0;
- }
- delay(100);
+ // Change removable-media readiness without resetting the shared USB device.
+ // CDC stays connected while removed-media requests fail promptly in the SDK.
  SD_MMC.end();
  sdmmc_host_t host=SDMMC_HOST_DEFAULT();
  host.max_freq_khz=10000; // Known working filesystem negotiation, rather than 20MHz.
@@ -149,9 +142,6 @@ int usb_msc_enable(void) {
   if(releaseRaw()){s_running.store(0);remountFilesystem();}
  }
  xSemaphoreGive(mutex);
- if(!tud_connect()){
-  Serial.println("[MSC] USB reconnect failed");usb_msc_disable();return 0;
- }
  if(ok)Serial.printf("[MSC] enabled — %lu sectors x 512 B, verified clock=%lu kHz, DMA scratch=%u\n",(unsigned long)sectors,(unsigned long)selectedClock,unsigned(kScratchSize));
  return ok?1:0;
 }

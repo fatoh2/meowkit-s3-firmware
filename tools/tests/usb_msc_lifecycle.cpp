@@ -29,7 +29,7 @@ extern "C" void* heap_caps_malloc(size_t n,unsigned caps){++msc_fake::allocation
 bool sdmmcEnsureReady(){assert(!usb_msc_is_active());++msc_fake::remounts;return true;}
 int main(){
  assert(usb_msc_enable());assert(usb_msc_is_active() && msc_fake::present && msc_fake::clock==10000 && msc_fake::dmaAllocations==1);
- assert(msc_fake::disconnects==1 && msc_fake::reconnects==1 && msc_fake::usbConnected);
+ assert(msc_fake::disconnects==0 && msc_fake::reconnects==0 && msc_fake::usbConnected);
  auto* msc=USBMSC::instance;std::array<uint8_t,65> packet{};assert(msc->read(16,64,packet.data()+1,64)==64);assert(packet[1]==0x5a && usb_msc_bytes_transferred()==64);
  msc_fake::callbackThread=true;
  assert(msc->startStop(0,false,true));assert(!msc_fake::present && usb_msc_is_active() && msc_fake::host);
@@ -49,11 +49,10 @@ int main(){
  msc_fake::failInit=false;msc_fake::failClock=true;assert(!usb_msc_enable());assert(!msc_fake::present && !msc_fake::host && !usb_msc_is_active());
  msc_fake::failClock=false;msc_fake::maximumClock=5000;assert(usb_msc_enable() && msc_fake::clock==5000);usb_msc_disable();
  msc_fake::maximumClock=1000;assert(usb_msc_enable() && msc_fake::clock==1000);usb_msc_disable();
- msc_fake::failDisconnect=true;assert(!usb_msc_enable());assert(!usb_msc_is_active() && !msc_fake::host);msc_fake::failDisconnect=false;
- msc_fake::failReconnect=true;assert(!usb_msc_enable());assert(!usb_msc_is_active() && !msc_fake::host && !msc_fake::present);
  msc_fake::failReconnect=false;msc_fake::maximumClock=10000;msc_fake::failBegin=true;msc_fake::failDeinit=true;
  assert(!usb_msc_enable());assert(usb_msc_is_active() && msc_fake::host && !msc_fake::present);
  assert(!msc->startStop(0,true,true));assert(msc->read(16,0,packet.data(),64)==-1);
  msc_fake::failBegin=false;msc_fake::failDeinit=false;usb_msc_disable();assert(!usb_msc_is_active() && !msc_fake::host && !msc_fake::present);
- puts("USB MSC lifecycle checks passed (clock selection, eject/load, re-enumeration, failure gating)");
+ assert(msc_fake::disconnects==0 && msc_fake::reconnects==0);
+ puts("USB MSC lifecycle checks passed (clock selection, eject/load, CDC preserved, failure gating)");
 }
