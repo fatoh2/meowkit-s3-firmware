@@ -6,6 +6,7 @@
 #include <SD_MMC.h>
 #include <USB.h>
 #include <USBMSC.h>
+#include <tusb.h>
 #include <atomic>
 #include <cstdlib>
 #include <initializer_list>
@@ -21,11 +22,17 @@ extern "C" {
 
 // Register MSC before USB.begin(), retaining the existing composite descriptor.
 static USBMSC s_msc;
+namespace {
+struct MscIdentity {
+ MscIdentity(){s_msc.vendorID("MeowKit");s_msc.productID("SDCard");s_msc.productRevision("1.1");}
+} s_identity; // Inquiry strings must exist before the initial USB enumeration.
+}
 static sdmmc_card_t* s_card=nullptr;
 static uint8_t* s_scratch=nullptr;
 static bool s_hostInitialized=false,s_callbacksInstalled=false;
 static std::atomic<int> s_running{0};
 static std::atomic<bool> s_acceptIO{false};
+static std::atomic<bool> s_prepared{false};
 static std::atomic<unsigned long> s_bytes{0};
 static constexpr size_t kScratchSize=4096;
 static constexpr TickType_t kLifecycleWait=pdMS_TO_TICKS(5000);
@@ -44,9 +51,9 @@ static SemaphoreHandle_t ioMutex() {
  return mutex;
 }
 static int32_t transfer(bool writing,uint32_t lba,uint32_t offset,uint8_t* buffer,uint32_t size) {
- if(!s_acceptIO.load())return -1;
+ if(!s_acceptIO.load() || !s_prepared.load())return -1;
  const auto mutex=ioMutex();if(!mutex || xSemaphoreTake(mutex,kLifecycleWait)!=pdTRUE)return -1;
- if(!s_acceptIO.load() || !s_card || !s_scratch){xSemaphoreGive(mutex);return -1;}
+ if(!s_acceptIO.load() || !s_prepared.load() || !s_card || !s_scratch){xSemaphoreGive(mutex);return -1;}
  if(writing)++s_stats.writes;else ++s_stats.reads;
  s_stats.lastLba=lba;s_stats.lastOffset=offset;s_stats.lastSize=size;const uint32_t started=micros();
  const auto result=meow_storage::mscTransfer(writing,lba,offset,buffer,size,s_card->csd.capacity,s_scratch,kScratchSize,
@@ -59,10 +66,19 @@ static int32_t transfer(bool writing,uint32_t lba,uint32_t offset,uint8_t* buffe
 }
 static int32_t _msc_read_cb(uint32_t lba,uint32_t offset,void* buffer,uint32_t size){return transfer(false,lba,offset,static_cast<uint8_t*>(buffer),size);}
 static int32_t _msc_write_cb(uint32_t lba,uint32_t offset,uint8_t* buffer,uint32_t size){return transfer(true,lba,offset,buffer,size);}
-static bool _msc_startstop_cb(uint8_t,bool,bool loadEject) {
+static bool _msc_startstop_cb(uint8_t,bool start,bool loadEject) {
  // Never print from a TinyUSB callback: CDC also needs the TinyUSB task.
- if(loadEject){const auto mutex=ioMutex();if(mutex && xSemaphoreTake(mutex,0)==pdTRUE){++s_stats.ejects;xSemaphoreGive(mutex);}}
- return true;
+ if(!loadEject)return true;
+ if(!start){s_acceptIO.store(false);s_msc.mediaPresent(false);}
+ const auto mutex=ioMutex();
+ if(!mutex || xSemaphoreTake(mutex,0)!=pdTRUE)return !start;
+ bool ok=true;
+ if(start){
+  ok=s_prepared.load() && s_running.load() && s_hostInitialized && s_card && s_scratch;
+  if(ok){s_acceptIO.store(true);s_msc.mediaPresent(true);}
+ } else ++s_stats.ejects;
+ xSemaphoreGive(mutex);
+ return ok;
 }
 // Caller owns ioMutex and has hidden media/rejected new callbacks.
 static bool releaseRaw() {
@@ -80,7 +96,15 @@ static void remountFilesystem() {
 int usb_msc_enable(void) {
  const auto mutex=ioMutex();if(!mutex || xSemaphoreTake(mutex,kLifecycleWait)!=pdTRUE)return 0;
  if(s_running.load()){const bool ready=s_acceptIO.load();xSemaphoreGive(mutex);return ready?1:0;}
- s_running.store(1);s_acceptIO.store(false);s_msc.mediaPresent(false);s_bytes.store(0);s_stats={};
+ s_running.store(1);s_prepared.store(false);s_acceptIO.store(false);s_msc.mediaPresent(false);s_bytes.store(0);s_stats={};
+ // Windows retains an ejected removable LUN until it observes reinsertion.
+ // Re-enumerate from the main task with valid media/geometry already prepared
+ // on reconnect; never change the PHY from a USB callback.
+ if(!tud_disconnect()){
+  s_running.store(0);xSemaphoreGive(mutex);
+  Serial.println("[MSC] USB detach failed; filesystem retained");return 0;
+ }
+ delay(100);
  SD_MMC.end();
  sdmmc_host_t host=SDMMC_HOST_DEFAULT();
  host.max_freq_khz=10000; // Known working filesystem negotiation, rather than 20MHz.
@@ -114,6 +138,7 @@ int usb_msc_enable(void) {
   if(!s_callbacksInstalled){s_msc.onRead(_msc_read_cb);s_msc.onWrite(_msc_write_cb);s_msc.onStartStop(_msc_startstop_cb);s_callbacksInstalled=true;}
   s_msc.vendorID("MeowKit");s_msc.productID("SDCard");s_msc.productRevision("1.1");
   stage="USBMSC.begin";if(!s_msc.begin(uint32_t(s_card->csd.capacity),512)){error=-1;break;}
+  s_prepared.store(true); // Set only after verification and USBMSC.begin succeed.
   s_acceptIO.store(true); // Card, scratch, callbacks, geometry are all ready.
   s_msc.mediaPresent(true);ok=true;
  } while(false);
@@ -124,13 +149,16 @@ int usb_msc_enable(void) {
   if(releaseRaw()){s_running.store(0);remountFilesystem();}
  }
  xSemaphoreGive(mutex);
+ if(!tud_connect()){
+  Serial.println("[MSC] USB reconnect failed");usb_msc_disable();return 0;
+ }
  if(ok)Serial.printf("[MSC] enabled — %lu sectors x 512 B, verified clock=%lu kHz, DMA scratch=%u\n",(unsigned long)sectors,(unsigned long)selectedClock,unsigned(kScratchSize));
  return ok?1:0;
 }
 void usb_msc_disable(void) {
  // Hide media first and stop queued callbacks accepting work. An existing
  // callback retains resources until it releases this same persistent mutex.
- s_msc.mediaPresent(false);s_acceptIO.store(false);
+ s_prepared.store(false);s_msc.mediaPresent(false);s_acceptIO.store(false);
  const auto mutex=ioMutex();
  if(!mutex || xSemaphoreTake(mutex,kLifecycleWait)!=pdTRUE){Serial.println("[MSC] IO drain timed out; raw resources retained, retry disable");return;}
  s_msc.mediaPresent(false);s_acceptIO.store(false);

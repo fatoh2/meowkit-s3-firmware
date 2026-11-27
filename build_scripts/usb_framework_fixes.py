@@ -65,6 +65,14 @@ def patch_msc(source):
     assert source.count(old) == 1, "Unsupported USBMSC SCSI command implementation"
     source = source.replace(old, """        case 0x35: // SYNCHRONIZE CACHE(10): raw writes complete synchronously.
         case SCSI_CMD_PREVENT_ALLOW_MEDIUM_REMOVAL:""")
+    # Zero means "busy, call me again" to TinyUSB, not removed media. Returning
+    # it after eject can continuously reschedule a request instead of failing it.
+    start = source.index("int32_t tud_msc_read10_cb(")
+    end = source.index("int32_t tud_msc_scsi_cb (", start)
+    callbacks = source[start:end]
+    assert callbacks.count("return 0;") == 4, "Unsupported USBMSC removed-media implementation"
+    callbacks = callbacks.replace("return 0;", "tud_msc_set_sense(lun, SCSI_SENSE_NOT_READY, 0x3a, 0);\n        return -1;")
+    source = source[:start] + callbacks + source[end:]
     return source
 
 
